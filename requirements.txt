@@ -1,0 +1,29 @@
+# Open Mind — a local, grounded code RAG + QA agent with accumulating memory
+# and a deterministic glossary. All processing is on-machine; no project content
+# ever leaves this computer.
+# Core web / API
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+aiofiles
+pyyaml
+# Local HTTP (LLM only, pinned to 127.0.0.1 by netguard)
+httpx
+# Parsing
+tree-sitter
+tree-sitter-java
+sqlglot           # dialect-aware SQL DDL parsing for the folded DB-schema model
+# Vector + embeddings (all local; both have in-process fallbacks)
+chromadb
+fastembed          # pulls onnxruntime (CPU); embeddings run on CPU by default
+numpy
+# Optional GPU embeddings (local, no egress) — install a GPU build of onnxruntime
+# and they auto-engage (OPENMIND_EMBED_DEVICE=auto). Windows AMD/Intel:
+#   pip uninstall onnxruntime && pip install onnxruntime-directml
+# NVIDIA: onnxruntime-gpu. ~9x faster than CPU on a large corpus.
+# Live machine-load readout for the Learning page (CPU/RAM; GPU via nvidia-smi).
+# Optional at runtime — sysload degrades gracefully if it is absent.
+psutil
+# MCP server (stdio) — exposes the knowledge layer to an editor/agent client
+mcp

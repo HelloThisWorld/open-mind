@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "openmind",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "openmind.main:app", "--host", "127.0.0.1", "--port", "8077"],
+      "port": 8077
+    }
+  ]
+}

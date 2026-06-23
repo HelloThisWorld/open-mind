@@ -1,0 +1,876 @@
+"""Background job engine — persistent, resumable, reconnectable (Invariant 6).
+
+A single server-side worker thread processes one job at a time. Every tick is
+persisted to SQLite, so progress survives tab-close and is reconnectable; SSE
+streams by polling that persisted state (so it reconnects trivially). On server
+restart, running jobs are marked ``interrupted`` and are one-click resumable.
+
+Ingest is incremental + idempotent (Invariant 12), pauses only at file boundaries with
+the per-file hash set as the checkpoint (Invariant 4), and Terminate performs a true
+full wipe to init (Invariant 5).
+"""
+from __future__ import annotations
+
+import os
+import threading
+import time
+import traceback
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from . import (ask as askmod, cases, config, conversation, db, docs as docsmod,
+               embeddings, glossary, llm_client, machine, mapio, rag, resources,
+               structure, vectorstore, walker, wikienrich)
+from .model_server import server as model_server
+
+_wake = threading.Event()
+_worker_started = False
+_current_job_id: Optional[str] = None
+_deleting_lock = threading.Lock()
+_deleting: set = set()     # project_ids with an in-flight background delete-cleanup
+# if set, the model server was stopped to free the GPU for embedding and must be
+# restarted once the current job ends (handled in the worker loop's finally).
+_resume_model_cfg: Optional[Dict[str, Any]] = None
+
+
+# ---------------------------------------------------------------------------
+# Worker lifecycle
+# ---------------------------------------------------------------------------
+def start_worker() -> None:
+    global _worker_started
+    if _worker_started:
+        return
+    _worker_started = True
+    _recover_on_restart()
+    reconcile_enrichment()   # completeness backstop after any restart/crash
+    t = threading.Thread(target=_worker_loop, name="openmind-job-worker", daemon=True)
+    t.start()
+
+
+def _recover_on_restart() -> None:
+    """Mark previously-running jobs interrupted + resumable (Invariant 6)."""
+    for job in db.list_jobs(status="running"):
+        # an in-flight Ask can't be resumed (its stream is gone) — fail it cleanly
+        # so the persisted exchange doesn't sit "running" forever after a restart.
+        if job["type"] == "ask":
+            db.update_job(job["job_id"], status="failed",
+                          error="interrupted by server restart", finished_at=db.now())
+            if job.get("path"):
+                db.ask_update(job["path"], status="error",
+                              payload={"error": "interrupted by server restart"})
+            continue
+        db.update_job(job["job_id"], status="interrupted",
+                      error="server restarted mid-job",
+                      log_tail=(job["log_tail"] + ["[restart] marked interrupted; resumable"])[-200:])
+        p = db.get_project(job["project_id"])
+        if p and p["state"] == "learning":
+            db.set_project_state(job["project_id"], "paused")
+    # resume any async delete that was interrupted mid-cleanup by the restart
+    for p in db.list_projects(state="deleting"):
+        _spawn_cleanup(p["id"])
+
+
+def _worker_loop() -> None:
+    global _current_job_id
+    while True:
+        job = _next_queued()
+        if not job:
+            _wake.wait(timeout=1.0)
+            _wake.clear()
+            continue
+        _current_job_id = job["job_id"]
+        try:
+            db.update_job(job["job_id"], status="running", started_at=db.now(),
+                          control={"requested": None}, error="")
+            if job["type"] == "ingest":
+                _run_ingest(job["job_id"])
+            elif job["type"] == "gendocs":
+                _run_gendocs(job["job_id"])
+            elif job["type"] == "ask":
+                _run_ask(job["job_id"])
+            elif job["type"] == "enrich":
+                _run_enrich(job["job_id"])
+            else:
+                db.update_job(job["job_id"], status="failed",
+                              error=f"unknown job type {job['type']}")
+        except _PauseSignal:
+            pass  # handled inside
+        except _TerminateSignal:
+            pass
+        except Exception as exc:  # noqa
+            tb = traceback.format_exc()
+            _log(job["job_id"], f"[error] {exc}")
+            db.update_job(job["job_id"], status="failed", error=str(exc),
+                          finished_at=db.now())
+            p = db.get_project(job["project_id"])
+            if p and p["state"] == "learning":
+                db.set_project_state(job["project_id"], "paused")
+            print(tb)
+        finally:
+            _current_job_id = None
+            _maybe_resume_model()   # restart the model if ingest freed the GPU
+
+
+def _maybe_resume_model() -> None:
+    """Restart the model server if it was stopped to free the GPU for embedding.
+    Runs after EVERY job but is a no-op unless an ingest set the resume flag — so
+    the model comes back on success, terminate, pause, or error alike."""
+    global _resume_model_cfg
+    cfg = _resume_model_cfg
+    if cfg is None:
+        return
+    _resume_model_cfg = None
+    try:
+        model_server.start(cfg)
+    except Exception:
+        pass
+
+
+def _free_gpu_for_embed(job_id: str) -> bool:
+    """Ingest never uses the LLM, so if OUR managed model server is resident on the
+    GPU (holding VRAM, idle), stop it for the embed phase so DirectML can use the
+    GPU (~5× faster than CPU); the worker loop restarts it afterwards. Returns True
+    if we stopped it. Never stops an ATTACHED external server, and respects an
+    explicit OPENMIND_EMBED_DEVICE=cpu."""
+    global _resume_model_cfg
+    if not config.INGEST_FREE_GPU:
+        return False
+    if os.environ.get("OPENMIND_EMBED_DEVICE", "smart").strip().lower() == "cpu":
+        return False
+    st = model_server.status()
+    if st.get("attached") or st.get("status") not in ("ready", "loading", "starting"):
+        return False
+    _log(job_id, "[embeddings] model server is resident on the GPU but idle — stopping "
+                 "it to free VRAM for fast GPU embedding (auto-restarts after learning).")
+    _resume_model_cfg = db.get_model_config()
+    model_server.stop()
+    deadline = time.time() + 12
+    while (time.time() < deadline and
+           model_server.status().get("status") not in ("stopped", "not_started")):
+        time.sleep(0.3)
+    return True
+
+
+def _next_queued() -> Optional[Dict[str, Any]]:
+    q = [j for j in db.list_jobs(status="queued")]
+    q.sort(key=lambda j: j["created_at"])
+    return q[0] if q else None
+
+
+# ---------------------------------------------------------------------------
+# Control signals
+# ---------------------------------------------------------------------------
+class _PauseSignal(Exception):
+    pass
+
+
+class _TerminateSignal(Exception):
+    pass
+
+
+def _control(job_id: str) -> Optional[str]:
+    j = db.get_job(job_id)
+    return (j or {}).get("control", {}).get("requested")
+
+
+def _checkpoint(job_id: str) -> None:
+    """Raise at a file boundary if pause/terminate was requested."""
+    req = _control(job_id)
+    if req == "terminate":
+        # transition out of 'running' immediately so terminate_project's wait
+        # loop observes the stop within one poll instead of blocking ~20s.
+        db.update_job(job_id, status="failed", error="terminated by user",
+                      control={"requested": None}, finished_at=db.now())
+        raise _TerminateSignal()
+    if req == "pause":
+        job = db.get_job(job_id)
+        db.update_job(job_id, status="paused",
+                      control={"requested": None})
+        if job:
+            db.set_project_state(job["project_id"], "paused")
+            _log(job_id, "[pause] checkpoint reached; partial data kept; resumable.")
+        raise _PauseSignal()
+
+
+def _log(job_id: str, msg: str) -> None:
+    job = db.get_job(job_id)
+    if not job:
+        return
+    tail = (job["log_tail"] + [f"{time.strftime('%H:%M:%S')} {msg}"])[-200:]
+    db.update_job(job_id, log_tail=tail)
+
+
+def _progress(job_id: str, **counts: Any) -> None:
+    job = db.get_job(job_id)
+    if not job:
+        return
+    prog = dict(job["progress"])
+    prog.update(counts)
+    db.update_job(job_id, progress=prog)
+
+
+# ---------------------------------------------------------------------------
+# Enqueue API
+# ---------------------------------------------------------------------------
+def enqueue_ingest(project_id: str, path: Optional[str] = None) -> Dict[str, Any]:
+    # Dedup: a single worker can only run one ingest at a time, so a second
+    # learn-click while one is already queued/running just piled jobs up behind it
+    # ("waiting for worker" forever). Reuse the in-flight ingest instead.
+    for j in db.list_jobs(project_ids=[project_id]):
+        if j["type"] == "ingest" and j["status"] in ("queued", "running"):
+            db.set_project_state(project_id, "learning")
+            _wake.set()
+            return j
+    # store the optional single-path filter RELATIVE so the (portable) jobs table
+    # carries no absolute machine path; _project_path_specs re-matches relatively.
+    rel_path = machine.to_rel(project_id, path) if path else path
+    job = db.create_job(project_id, "ingest", rel_path)
+    db.set_project_state(project_id, "learning")
+    _wake.set()
+    return job
+
+
+def enqueue_gendocs(project_id: str) -> Dict[str, Any]:
+    job = db.create_job(project_id, "gendocs", None)
+    _wake.set()
+    return job
+
+
+# ---------------------------------------------------------------------------
+# Wikipedia enrichment (deterministic pipeline guarantee + crash recovery)
+# ---------------------------------------------------------------------------
+def _enrich_enabled(project: Optional[Dict[str, Any]]) -> bool:
+    return bool((project or {}).get("meta", {}).get("enrich_enabled", True))
+
+
+def _enrich_context(project: Optional[Dict[str, Any]]) -> str:
+    meta = (project or {}).get("meta", {})
+    return (meta.get("enrich_context") or wikienrich.infer_context(project) or "").strip()
+
+
+def _enrich_pins(project: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    pins = (project or {}).get("meta", {}).get("enrich_pins") or {}
+    return {str(k): str(v) for k, v in pins.items() if k and v}
+
+
+def _enrich_block(project: Optional[Dict[str, Any]]) -> List[str]:
+    return [str(b) for b in ((project or {}).get("meta", {}).get("enrich_block") or []) if b]
+
+
+def enqueue_enrich(project_id: str) -> Optional[Dict[str, Any]]:
+    """Queue a Wikipedia-enrichment job for a project, unless disabled or one is
+    already pending/running. Returns the job (or the existing one), or None."""
+    p = db.get_project(project_id)
+    if not p or not _enrich_enabled(p):
+        return None
+    for j in db.list_jobs(status="queued") + db.list_jobs(status="running"):
+        if j["project_id"] == project_id and j["type"] == "enrich":
+            return j
+    job = db.create_job(project_id, "enrich", None)
+    _wake.set()
+    return job
+
+
+def reconcile_enrichment() -> int:
+    """Completeness backstop (crash / network failure / server shutdown recovery):
+    for every READY, enrich-enabled project whose glossary still has un-attempted
+    terms, (re)queue an enrichment job. Because enrichment is incremental and marks
+    each term attempted, this resumes exactly the work that did not finish — and is
+    a no-op once a project is fully enriched. Called on startup and after ingest."""
+    queued = 0
+    try:
+        projects = db.list_projects()
+    except Exception:
+        return 0
+    for p in projects:
+        if p.get("state") != "ready" or not _enrich_enabled(p):
+            continue
+        try:
+            doc = mapio.load_glossary(p["id"])
+        except Exception:
+            continue
+        if glossary.unattempted_terms(doc):
+            if enqueue_enrich(p["id"]):
+                queued += 1
+    return queued
+
+
+def enqueue_ask(scope_id: str, pids: List[str], project_id: str,
+                scope_desc: Dict[str, Any], question: str,
+                attachments: Optional[List[Dict[str, Any]]] = None,
+                k: int = 12) -> Dict[str, Any]:
+    """Submit an Ask through the SAME single-task worker (Part 2). It PENDS if any
+    job is already running; the exchange is persisted (Part 1) before it runs."""
+    ex = conversation.create(scope_id, project_id, pids, scope_desc,
+                             question, attachments, k)
+    # the job's free 'path' column carries the exchange id the worker will run
+    job = db.create_job(project_id, "ask", ex["id"])
+    db.ask_update(ex["id"], job_id=job["job_id"])
+    _wake.set()
+    return {"job_id": job["job_id"], "exchange_id": ex["id"], "status": "queued"}
+
+
+def cancel_job(job_id: str) -> Dict[str, Any]:
+    """Cancel a job. A QUEUED job is removed from the queue immediately; a RUNNING
+    job is signalled to stop at its next checkpoint / streamed token (Part 2)."""
+    job = db.get_job(job_id)
+    if not job:
+        raise KeyError("job not found")
+    if job["status"] == "queued":
+        db.update_job(job_id, status="failed", error="cancelled by user",
+                      finished_at=db.now())
+        if job["type"] == "ask" and job.get("path"):
+            db.ask_update(job["path"], status="cancelled", payload={"answer": ""})
+    elif job["status"] == "running":
+        db.update_job(job_id, control={"requested": "terminate"})
+    return db.get_job(job_id)
+
+
+def pause(job_id: str) -> Dict[str, Any]:
+    job = db.get_job(job_id)
+    if not job:
+        raise KeyError("job not found")
+    if job["status"] == "queued":
+        db.update_job(job_id, status="paused")
+        db.set_project_state(job["project_id"], "paused")
+    elif job["status"] == "running":
+        db.update_job(job_id, control={"requested": "pause"})
+    return db.get_job(job_id)
+
+
+def resume(job_id: str) -> Dict[str, Any]:
+    job = db.get_job(job_id)
+    if not job:
+        raise KeyError("job not found")
+    if job["status"] in ("paused", "interrupted", "failed"):
+        db.update_job(job_id, status="queued", control={"requested": None}, error="")
+        db.set_project_state(job["project_id"], "learning")
+        _wake.set()
+    return db.get_job(job_id)
+
+
+def _signal_stop_jobs(project_id: str) -> None:
+    """FAST part of stopping a project's jobs: signal a RUNNING job to stop at its
+    next checkpoint and IMMEDIATELY fail queued/paused/interrupted ones. NO wait —
+    the (bounded) wait for a running job to actually stop happens off the request
+    path (in _wait_jobs_stopped / the cleanup thread). Cancels the linked Ask too."""
+    for job in db.list_jobs(project_ids=[project_id]):
+        if job["status"] == "running":
+            db.update_job(job["job_id"], control={"requested": "terminate"})
+        elif job["status"] in ("queued", "paused", "interrupted"):
+            db.update_job(job["job_id"], status="failed", error="terminated by user",
+                          control={"requested": "terminate"}, finished_at=db.now())
+            if job["type"] == "ask" and job.get("path"):
+                db.ask_update(job["path"], status="cancelled", payload={"answer": ""})
+    _wake.set()
+
+
+def _wait_jobs_stopped(project_id: str, timeout: float = 20.0) -> None:
+    """Bounded wait for a running job to leave 'running' (its checkpoints ack within
+    one file / one embed batch), then force-fail any straggler. Used off the request
+    path so a slow in-flight embed never freezes the UI."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not [j for j in db.list_jobs(project_ids=[project_id])
+                if j["status"] == "running"]:
+            break
+        time.sleep(0.1)
+    for job in db.list_jobs(project_ids=[project_id]):
+        if job["status"] in ("running", "queued", "paused", "interrupted"):
+            db.update_job(job["job_id"], status="failed", error="terminated by user",
+                          control={"requested": "terminate"}, finished_at=db.now())
+            if job["type"] == "ask" and job.get("path"):
+                db.ask_update(job["path"], status="cancelled")
+
+
+def _stop_project_jobs(project_id: str) -> None:
+    """Signal + bounded wait (used by terminate, which must finish the wipe before
+    the project can be re-learned)."""
+    _signal_stop_jobs(project_id)
+    _wait_jobs_stopped(project_id)
+
+
+def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, Any]:
+    """Stop any running job + FULL wipe to init (Invariant 5)."""
+    _stop_project_jobs(project_id)
+
+    # 1) drop the code collection (delete-only; the next learn recreates it lazily —
+    # recreating an empty collection now is wasted work on a large project)
+    vectorstore.get_code_store(project_id).drop()
+    # 2) delete map/* and docs/*
+    for sub in ("map", "docs"):
+        d = config.project_dir(project_id) / sub
+        if d.exists():
+            for f in d.glob("*"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+    # 3) clear per-file hashes (forces a full re-embed on the next learn). KEEP the
+    # path selection: a Terminate wipes LEARNED DATA but should leave the project
+    # ready to re-learn in one click — clearing the repo paths here would make
+    # "Start / Re-learn" fail with "add a path first" (use Delete to drop a project).
+    db.clear_file_index(project_id)
+    # cases: keep but flag stale, unless clearing
+    if clear_cases:
+        cases.clear_cases(project_id)
+    else:
+        cases.mark_all_stale(project_id)
+    # 4) state = init
+    db.set_project_state(project_id, "init")
+    config.ensure_project_dirs(project_id)
+    return db.get_project(project_id)
+
+
+def _cleanup_deleted(project_id: str) -> None:
+    """Background pipeline that frees a deleted project's storage: wait (bounded) for
+    any running job to stop — never wipe under a live ingest — then drop the vector
+    collections, delete the data dir, and finally drop the entity row (+ jobs +
+    file_index + ask history + machine-local path config). Idempotent; also used for
+    restart recovery. The project is already a 'deleting' tombstone (hidden from the
+    UI, un-revivable), so this races nothing the user can see."""
+    import shutil
+    try:
+        _wait_jobs_stopped(project_id, timeout=30.0)
+        for store in (vectorstore.get_code_store(project_id),
+                      vectorstore.get_cases_store(project_id)):
+            try:
+                store.drop()                   # delete-only (no recreate)
+            except Exception:
+                pass
+        try:
+            d = config.project_dir(project_id)
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+        db.delete_project(project_id)          # row finally disappears
+    finally:
+        with _deleting_lock:
+            _deleting.discard(project_id)
+
+
+def _spawn_cleanup(project_id: str) -> bool:
+    """Start the background cleanup for a project unless one is already running."""
+    with _deleting_lock:
+        if project_id in _deleting:
+            return False
+        _deleting.add(project_id)
+    threading.Thread(target=_cleanup_deleted, args=(project_id,),
+                     name=f"reclaim-{project_id[:8]}", daemon=True).start()
+    return True
+
+
+def request_delete(project_id: str) -> Dict[str, Any]:
+    """ASYNC delete (the HTTP path). Tombstones the project so it vanishes from the
+    listing AT ONCE ('deleting' is one-way — a job handler unwinding from the
+    terminate can't revive it), signals its jobs to stop WITHOUT waiting, and runs
+    the heavy storage cleanup on a background thread. Returns immediately so the UI
+    is snappy and never freezes; a refresh will not show the project again."""
+    db.set_project_state(project_id, "deleting")
+    _signal_stop_jobs(project_id)
+    _spawn_cleanup(project_id)
+    return {"deleting": project_id}
+
+
+def delete_project(project_id: str) -> Dict[str, Any]:
+    """Synchronous full removal (blocks until storage + entity are gone). Kept for
+    inline callers/tests; the HTTP path uses request_delete."""
+    db.set_project_state(project_id, "deleting")
+    _signal_stop_jobs(project_id)
+    _cleanup_deleted(project_id)
+    return {"deleted": project_id}
+
+
+# ---------------------------------------------------------------------------
+# Ingest
+# ---------------------------------------------------------------------------
+def _project_path_specs(project_id: str, only_path: Optional[str]) -> List[Dict[str, Any]]:
+    specs = db.get_project_paths(project_id)
+    if only_path:
+        # only_path is stored relative (see enqueue_ingest); match spec paths
+        # relatively too. relativize() is idempotent, so an absolute input works.
+        root = machine.project_root(project_id)
+        op = machine.relativize(walker.norm(only_path), root)
+        match = [s for s in specs if machine.relativize(walker.norm(s["path"]), root) == op]
+        if match:
+            return match
+        return [{"path": machine.absolutize(only_path, root), "exclude": []}]
+    return specs
+
+
+def _run_ingest(job_id: str) -> None:
+    job = db.get_job(job_id)
+    project_id = job["project_id"]
+    db.set_project_state(project_id, "learning")
+    specs = _project_path_specs(project_id, job.get("path"))
+    if not specs:
+        _log(job_id, "[ingest] no paths to ingest.")
+        db.update_job(job_id, status="failed", error="no ingest paths", finished_at=db.now())
+        db.set_project_state(project_id, "init")
+        return
+
+    # ---- step 1: scan (honors selection / gitignore / built-ins; Invariant 3) ----
+    db.update_job(job_id, step="scanning")
+    current_files: List[str] = []
+    file_meta: Dict[str, Dict[str, str]] = {}
+    for spec in specs:
+        root = walker.norm(spec["path"])
+        for f in walker.iter_files(root, spec.get("exclude", [])):
+            repo = walker.find_repo_root(f, root)
+            svc = walker.service_name(repo)
+            current_files.append(f)
+            file_meta[f] = {"repo": repo, "service": svc}
+            # Honor pause/terminate WHILE walking a large tree — not only once the
+            # whole scan finishes — so Terminate stops the worker promptly.
+            if len(current_files) % 64 == 0:
+                _checkpoint(job_id)
+    # Single machine-local anchor. Every learned artifact below stores paths
+    # RELATIVE to this root, so the data is portable + trace-free; files are
+    # still READ from disk by their absolute path (cache_text/cache_hash keys).
+    root = machine.project_root(project_id)
+    def rel_of(f: str) -> str:
+        return machine.relativize(f, root)
+    current_set = {rel_of(f) for f in current_files}
+    _progress(job_id, files_total=len(current_files), files_done=0)
+    _log(job_id, f"[scan] {len(current_files)} indexable files selected.")
+    _log(job_id, f"[resources] {resources.status_line()}")
+    _checkpoint(job_id)
+
+    # ---- step 2: read + content-hash every file (the change-sync key) ----
+    # The per-file content hash is the SHARED key reused by both the deterministic
+    # glossary (below) and the incremental RAG index (step 4): a file whose hash is
+    # unchanged is never re-scanned or re-embedded.
+    db.update_job(job_id, step="analyzing")
+    cache_text: Dict[str, str] = {}
+    cache_hash: Dict[str, str] = {}
+    for i, f in enumerate(current_files):
+        text = walker.read_text(f)
+        cache_text[f] = text
+        cache_hash[f] = walker.hash_text(text)
+        if i % 25 == 0:
+            _progress(job_id, analyzed=i + 1)
+            _checkpoint(job_id)
+            resources.guard_or_abort(lambda m: _log(job_id, m))  # keep RAM headroom
+
+    # ---- step 3: deterministic glossary (term/acronym -> VERBATIM definition) ----
+    # The primary build-time artifact: term definitions are extracted ONCE here
+    # (pure pattern-matching, no LLM, verbatim from authoritative sources) and
+    # thereafter QUERIED (never re-parsed). Incremental via the same per-file
+    # content hash — an unchanged definition source is carried over, not re-scanned.
+    db.update_job(job_id, step="glossary")
+    try:
+        gfiles = [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files]
+        # cancel-aware: a Terminate landing mid-build stops the pass promptly
+        # rather than scanning the whole corpus first. Skip persisting a partial
+        # artifact in that case — the wipe removes map/* anyway.
+        gdoc = glossary.build_glossary(
+            gfiles, prior=mapio.load_glossary(project_id),
+            cancel=lambda: _control(job_id) == "terminate")
+        if _control(job_id) != "terminate":
+            mapio.save_glossary(project_id, gdoc)
+            _log(job_id, f"[glossary] {gdoc['stats']['term_count']} term(s) from "
+                         f"{gdoc['stats']['source_count']} source(s) "
+                         f"({gdoc['stats']['sources_reused']} reused).")
+    except Exception as exc:
+        _log(job_id, f"[glossary] skipped ({exc})")
+    _checkpoint(job_id)   # raises if a pause/terminate arrived during the build
+
+    # ---- step 3b: deterministic STRUCTURE map (modules / defs / dependency /
+    # call / entry-point-flow graphs) — the basis of the Graphs view. Same
+    # incremental, hash-keyed, never-fabricated contract as the glossary. ----
+    db.update_job(job_id, step="structure")
+    try:
+        sfiles = [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files]
+        # paths are already relative -> store an empty root (no absolute trace)
+        sdoc = structure.build_structure(sfiles, root="",
+                                          prior=mapio.load_structure(project_id))
+        if _control(job_id) != "terminate":
+            mapio.save_structure(project_id, sdoc)
+            st = sdoc.get("stats", {})
+            _log(job_id, f"[structure] {st.get('definition_count', 0)} defs · "
+                         f"{st.get('module_count', 0)} modules · "
+                         f"{st.get('call_edges', 0)} call edges · "
+                         f"{st.get('entry_point_count', 0)} entry points "
+                         f"({st.get('sources_reused', 0)} reused).")
+    except Exception as exc:
+        _log(job_id, f"[structure] skipped ({exc})")
+    _checkpoint(job_id)
+
+    # ---- step 4: RAG indexing (incremental, idempotent; Invariant 12) ----
+    # Embeddings are BATCHED ACROSS files (BATCH_CHUNKS at a time), not one embed
+    # call per file — that is what keeps a GPU / throughput backend fully utilised
+    # instead of starving it with ~10-chunk calls. A file is recorded in the
+    # file_index only AFTER its chunks are embedded + upserted, so a crash/pause
+    # mid-batch just re-indexes those few files on resume (stable ids -> idempotent).
+    db.update_job(job_id, step="indexing")
+    # Smart embedding device: bulk-embed on the GPU only when the card is FREE. If
+    # the local LLM is resident on the GPU, embed on CPU so DirectML can't saturate
+    # VRAM and crash the display driver (a whole-machine freeze). Decided once here,
+    # at the embed step (the only GPU-heavy phase). Explicit OPENMIND_EMBED_DEVICE
+    # overrides this and is respected as-is.
+    store = vectorstore.get_code_store(project_id)
+    index = db.get_file_index(project_id)
+    # only the changed/new files actually embed (incremental) — so don't stop the
+    # model to free the GPU when an incremental re-ingest has nothing to embed.
+    _needs_embed = any(index.get(rel_of(f), {}).get("file_hash") != cache_hash[f]
+                       for f in current_files)
+    # Auto-free the GPU: stop our idle MANAGED model so embedding can use the GPU
+    # (ingest never uses the LLM); the worker loop restarts it after this job.
+    _freed = _free_gpu_for_embed(job_id) if _needs_embed else False
+    _mstat = model_server.status().get("status")
+    _gpu_free = _freed or _mstat in ("not_started", "stopped", "error", None)
+    _dev = embeddings.prepare_for_bulk(_gpu_free)
+    _log(job_id, f"[embeddings] {_dev} (model server: {_mstat or 'unknown'})")
+    if _needs_embed and not _gpu_free and "CPU" in _dev:
+        _log(job_id, "[embeddings] an ATTACHED model server holds the GPU, so embedding "
+                     "runs on CPU (slower, no VRAM crash). Stop it before learning for "
+                     "~5x faster GPU embedding (OPENMIND_INGEST_FREE_GPU only frees our "
+                     "own managed server).")
+    done = skipped = indexed = changed = 0
+    chunk_total = sum(len(v.get("chunk_ids", [])) for v in index.values())
+    # Adaptive batch: large on GPU (throughput); small on CPU so pause/terminate/
+    # delete are honored within ~one short embed instead of a long one.
+    BATCH_CHUNKS = 256 if _gpu_free else 64
+    pending: List[Dict[str, Any]] = []
+    pending_chunks = 0
+
+    def _flush_batch() -> None:
+        nonlocal pending, pending_chunks, chunk_total
+        if not pending:
+            return
+        rag.embed_and_upsert(store, [c for rec in pending for c in rec["chunks"]])
+        for rec in pending:
+            ids = [c["id"] for c in rec["chunks"]]
+            db.upsert_file_index(project_id, rec["f"], rec["h"], ids,
+                                 rec["service"], rec["topics"])
+            chunk_total += len(ids)
+        pending = []
+        pending_chunks = 0
+
+    for i, f in enumerate(current_files):
+        _checkpoint(job_id)  # pause/terminate only at a file boundary (Invariant 4)
+        if i % 8 == 0:
+            resources.guard_or_abort(lambda m: _log(job_id, m))  # keep RAM headroom
+        r = rel_of(f)        # portable identity key (file is read from disk via f)
+        h = cache_hash[f]
+        prior = index.get(r)
+        meta = file_meta[f]
+        repo_rel = machine.relativize(meta["repo"], root)
+        topics: List[str] = []     # chunk-header topic tags (architecture-agnostic: none)
+        if prior and prior.get("file_hash") == h:
+            skipped += 1
+        else:
+            if prior and prior.get("chunk_ids"):
+                rag.delete_file_chunks(store, r, prior["chunk_ids"])
+                chunk_total -= len(prior["chunk_ids"])
+                changed += 1
+            chunks = rag.chunk_file(project_id, r, cache_text[f],
+                                    meta["service"], repo_rel, topics, h)
+            pending.append({"f": r, "h": h, "service": meta["service"],
+                            "topics": topics, "chunks": chunks})
+            pending_chunks += len(chunks)
+            indexed += 1
+            if pending_chunks >= BATCH_CHUNKS:
+                _checkpoint(job_id)   # honor pause/terminate BEFORE a blocking embed
+                _flush_batch()
+        done += 1
+        if i % 5 == 0 or done == len(current_files):
+            _progress(job_id, files_done=done, files_skipped=skipped,
+                      files_indexed=indexed, files_changed=changed,
+                      chunks=chunk_total + pending_chunks)
+    _checkpoint(job_id)   # honor a late pause/terminate before the final embed
+    _flush_batch()   # embed + store the final partial batch
+
+    # ---- step 5: prune removed / now-excluded files ----
+    removed = 0
+    for fpath, rec in list(index.items()):
+        if fpath not in current_set:
+            rag.delete_file_chunks(store, fpath, rec.get("chunk_ids"))
+            db.delete_file_index_entry(project_id, fpath)
+            removed += 1
+    _progress(job_id, files_removed=removed, chunks=store.count())
+    _log(job_id, f"[index] indexed={indexed} changed={changed} skipped={skipped} "
+                 f"removed={removed} chunks={store.count()}")
+
+    # ---- done ----
+    _checkpoint(job_id)  # if terminate raced in after the last file, abort before finalize
+    db.update_job(job_id, status="done", step="done", finished_at=db.now())
+    db.set_project_state(project_id, "ready")
+    _log(job_id, "[done] ingest complete; triggering docs sync + wiki enrichment.")
+    enqueue_gendocs(project_id)
+    enqueue_enrich(project_id)   # timing (b): index is READY first; enrich follows
+
+
+# ---------------------------------------------------------------------------
+# Wikipedia enrichment job (the deterministic guarantee; resumable + recoverable)
+# ---------------------------------------------------------------------------
+def _run_enrich(job_id: str) -> None:
+    job = db.get_job(job_id)
+    project_id = job["project_id"]
+    p = db.get_project(project_id)
+    if not p or not _enrich_enabled(p):
+        db.update_job(job_id, status="done", step="done", finished_at=db.now())
+        return
+    doc = mapio.load_glossary(project_id)
+    pending = glossary.unattempted_terms(doc)
+    if not pending:
+        _log(job_id, "[enrich] up to date — every term already attempted.")
+        db.update_job(job_id, status="done", step="done", finished_at=db.now())
+        return
+    ctx = _enrich_context(p)
+    pins = _enrich_pins(p)
+    block = _enrich_block(p)
+    db.update_job(job_id, step="enriching")
+    _progress(job_id, enrich_total=len(pending), enrich_done=0)
+    _log(job_id, f"[enrich] {len(pending)} term(s) to look up on Wikipedia "
+                 f"(context: '{ctx}').")
+
+    def _cancel() -> bool:
+        return _control(job_id) in ("terminate", "pause")
+
+    def _prog(done: int, total: int, term: str, result: Optional[str]) -> None:
+        _progress(job_id, enrich_done=done, enrich_total=total)
+        _log(job_id, f"[enrich] {term} -> {result}" if result
+             else f"[enrich] {term} -> (no confident match; kept local)")
+
+    res = wikienrich.enrich_project(project_id, context=ctx, pins=pins, block=block,
+                                    skip_enriched=True, cancel=_cancel,
+                                    on_progress=_prog)
+    # honor a pause/terminate that arrived mid-run (un-attempted terms remain, so
+    # resume / the startup reconciler completes them).
+    _checkpoint(job_id)
+    db.update_job(job_id, status="done", step="done", finished_at=db.now())
+    _log(job_id, f"[enrich] done: matched={res['matched']} "
+                 f"no-match={res['none']} of {res['total']}.")
+
+
+# ---------------------------------------------------------------------------
+# Gendocs
+# ---------------------------------------------------------------------------
+def _run_gendocs(job_id: str) -> None:
+    job = db.get_job(job_id)
+    project_id = job["project_id"]
+    db.update_job(job_id, step="generating docs")
+
+    def prog(done, total, page):
+        _progress(job_id, pages_done=done, pages_total=total)
+        if _control(job_id) == "terminate":
+            raise _TerminateSignal()
+
+    result = docsmod.generate(project_id, progress=prog)
+    _log(job_id, f"[docs] generated {result['count']} pages.")
+    db.update_job(job_id, status="done", step="done", finished_at=db.now(),
+                  progress={**job["progress"], "pages": result["count"]})
+
+
+# ---------------------------------------------------------------------------
+# Ask (grounded, streamed answer — runs under the single-task lock; Part 2)
+# ---------------------------------------------------------------------------
+def _run_ask(job_id: str) -> None:
+    """Build a grounded prompt + stream the local model's answer into the
+    persisted exchange. Because this runs in the single worker, no two
+    inferences (Ask-vs-Ask, or Ask-vs-ingest summaries) ever run concurrently
+    against the constrained llama-server (--parallel 1)."""
+    job = db.get_job(job_id)
+    ex_id = job.get("path")
+    ex = db.ask_get(ex_id) if ex_id else None
+    if not ex:
+        db.update_job(job_id, status="failed", error="ask exchange missing",
+                      finished_at=db.now())
+        return
+
+    # server-ready gate, re-checked at the moment the lock frees (Invariant 7)
+    try:
+        model_server.refresh()
+    except Exception:
+        pass
+    if not llm_client.is_ready():
+        db.ask_update(ex_id, status="error",
+                      payload={"error": "model server not ready"})
+        db.update_job(job_id, status="failed", error="model server not ready",
+                      finished_at=db.now())
+        return
+
+    # cancel can land while the job sat queued (cancel_job set the exchange
+    # 'cancelled' but the worker may have already dequeued it) — abort cleanly.
+    if ex.get("status") == "cancelled":
+        db.update_job(job_id, status="failed", error="cancelled by user",
+                      control={"requested": None}, finished_at=db.now())
+        return
+
+    def _aborted() -> bool:
+        """A cancel (cancel_job) or a terminate (terminate_project) may flip the
+        job to terminal / set control=terminate at any moment from another
+        thread; treat either as 'stop now' (no second/clobbering inference)."""
+        jn = db.get_job(job_id)
+        if not jn:
+            return True
+        return (jn.get("control", {}).get("requested") == "terminate"
+                or jn.get("status") in ("failed", "cancelled"))
+
+    def _finish_cancelled(answer: str) -> None:
+        db.ask_update(ex_id, status="cancelled", payload={"answer": answer})
+        db.update_job(job_id, status="failed", error="cancelled by user",
+                      control={"requested": None}, finished_at=db.now())
+
+    pids = ex.get("pids") or []
+    question = ex.get("question") or ""
+    attachments = ex.get("attachments") or []
+    k = int(ex.get("k", 12) or 12)
+    pairs = conversation.context_pairs(ex["scope_id"], ex_id)   # multi-turn context
+
+    try:
+        built = askmod.build_grounded(pids, question, attachments, k=k, history=pairs)
+    except Exception as exc:  # noqa
+        db.ask_update(ex_id, status="error",
+                      payload={"error": f"retrieval failed: {exc}"})
+        db.update_job(job_id, status="failed", error=str(exc),
+                      control={"requested": None}, finished_at=db.now())
+        return
+
+    if _aborted():                       # cancelled/terminated during retrieval
+        _finish_cancelled("")
+        return
+
+    # persist the grounding (sources/meta) immediately so the UI can show it
+    # while the (prefill-bound) first token is still pending.
+    db.ask_update(ex_id, status="running", payload={"meta": {
+        "sources": built["sources"], "raw": built["raw"], "meta": built["meta"]}})
+    db.update_job(job_id, step="answering", progress={"phase": "answering", "answer": ""})
+
+    acc = ""
+    last = 0.0
+    try:
+        for delta in llm_client.chat_stream(built["messages"], max_tokens=1024):
+            if _aborted():               # checked EVERY delta (not only on flush)
+                _finish_cancelled(acc)
+                return
+            acc += delta
+            t = time.monotonic()
+            if t - last >= 0.25:          # throttle DB writes (SSE polls ~0.8s)
+                db.update_job(job_id, progress={"phase": "answering", "answer": acc})
+                last = t
+    except Exception as exc:  # surface transport/model errors
+        db.ask_update(ex_id, status="error", payload={"answer": acc, "error": str(exc)})
+        db.update_job(job_id, status="failed", error=str(exc),
+                      control={"requested": None}, finished_at=db.now())
+        return
+
+    # a cancel/terminate may have arrived during the final (post-loop) window, or
+    # terminate_project's 20s wait may already have force-failed this job — never
+    # resurrect a terminal job to 'done' (Invariant 5 wipe stays effective).
+    if _aborted():
+        _finish_cancelled(acc)
+        return
+
+    grounding_kinds = sorted({s.get("kind") for s in built["sources"] if s.get("kind")})
+    slim_att = [{"name": a.get("name"), "kind": a.get("kind"),
+                 "status": a.get("status", "")} for a in attachments]
+    db.ask_update(ex_id, status="done", payload={
+        "answer": acc, "attachments": slim_att,
+        "grounding_used": built["meta"].get("source_count", 0) > 0,
+        "grounding_kinds": grounding_kinds})
+    db.update_job(job_id, status="done", step="done",
+                  progress={"phase": "done", "answer": acc},
+                  control={"requested": None}, finished_at=db.now())

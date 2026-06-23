@@ -1,0 +1,29 @@
+# Runtime data — indexes, vector store, sqlite, audit log. NEVER commit:
+# this is where ingested project content lands.
+data/
+data_*/
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+
+# Local corpus checkout (the demo clones Apache Kafka here)
+corpus/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Models / binaries
+*.gguf
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+.claude/

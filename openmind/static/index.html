@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Open Mind</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --border:#2a323d;
+  --fg:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --accent2:#2563eb;
+  --green:#2ea043; --amber:#d29922; --red:#da3633; --purple:#a371f7;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent);text-decoration:none}
+button{font:inherit;cursor:pointer;border:1px solid var(--border);background:var(--panel2);color:var(--fg);border-radius:6px;padding:6px 12px}
+button:hover{background:#28303b}
+button.primary{background:var(--accent2);border-color:var(--accent2)}
+button.primary:hover{background:var(--accent)}
+button.danger{background:#3d1d1d;border-color:#5d2626;color:#ff9b9b}
+button.danger:hover{background:#5d2626}
+button.small{padding:3px 8px;font-size:12px}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{font:inherit;background:#0d1117;color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 9px;width:100%}
+textarea{resize:vertical}
+label{font-size:12px;color:var(--muted);display:block;margin:8px 0 3px}
+.row{display:flex;gap:8px;align-items:center}
+.wrap{display:flex;height:100vh;overflow:hidden}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--border)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}.dot.blue{background:var(--accent)}
+.tag{font-size:11px;padding:1px 7px;border-radius:99px;background:var(--panel2);border:1px solid var(--border);color:var(--muted)}
+.tag.green{color:#7ee787;border-color:#2ea04355}.tag.amber{color:#e3b341;border-color:#d2992255}.tag.red{color:#ff9b9b;border-color:#da363355}.tag.blue{color:#79c0ff;border-color:#3b82f655}
+
+/* ---- IntelliJ-style shell: activity bar + left tool panel + main ---- */
+#activitybar{width:52px;min-width:52px;background:#0b0e13;border-right:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:6px}
+#activitybar .brand{width:30px;height:30px;border-radius:7px;background:linear-gradient(135deg,#3b82f6,#a371f7);margin-bottom:6px;flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;color:#E53935;font-weight:800;font-size:20px;line-height:1;cursor:default;user-select:none}
+.act{width:40px;height:40px;border:1px solid transparent;background:none;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;color:var(--muted);padding:0;flex:0 0 auto}
+.act:hover{background:var(--panel2);color:var(--fg)}
+.act.active{background:#1f2a3a;color:var(--fg);border-color:#2c4262}
+.act svg{width:22px;height:22px;display:block}
+.actfoot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:6px}
+
+#leftpanel{width:320px;min-width:320px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#leftBody{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.lphead{padding:12px 12px 10px;font-weight:700;font-size:15px;letter-spacing:.3px;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border)}
+.lpscroll{padding:8px 12px 12px;overflow:auto;flex:1}
+.section h4,.lpscroll h4{margin:8px 4px 4px;font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px;display:flex;justify-content:space-between;align-items:center}
+.listitem{padding:7px 9px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.listitem:hover{background:var(--panel2)}
+.listitem.active{background:#1f2a3a;outline:1px solid #2c4262}
+.listitem .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* main */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#topbar{height:48px;min-height:48px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--panel)}
+#jobsIndicator{flex:1;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);cursor:pointer;overflow:hidden}
+#jobsIndicator .bar{flex:0 0 160px;height:6px;background:var(--panel2);border-radius:99px;overflow:hidden}
+#jobsIndicator .bar > i{display:block;height:100%;background:var(--accent);width:0%}
+#content{flex:1;overflow:auto;padding:18px 22px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h3{margin:0 0 10px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;flex-wrap:wrap}
+.tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 14px;color:var(--muted)}
+.tabs button.active{color:var(--fg);border-bottom-color:var(--accent)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border:1px solid var(--border);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--panel2);color:var(--muted);font-weight:600}
+code{font-family:var(--mono);background:#0d1117;padding:1px 5px;border-radius:4px;font-size:12px}
+pre{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px;overflow:auto;font-family:var(--mono);font-size:12px}
+.log{background:#0a0d12;border:1px solid var(--border);border-radius:8px;padding:8px;height:200px;overflow:auto;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;color:#9fb0c0}
+.muted{color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:4px 10px;font-size:13px}
+.kv b{color:var(--muted);font-weight:500}
+
+/* machine-load corner widget: a compact chip that expands to a popover.
+   Values update IN PLACE on each poll (no remount) so nothing flickers. */
+#mlWidget{position:fixed;right:14px;bottom:12px;z-index:45}
+.mlw-chip{display:inline-flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--border);
+  border-radius:99px;padding:5px 11px 5px 9px;color:var(--fg);font-size:12px;
+  box-shadow:0 4px 14px rgba(0,0,0,.35)}
+.mlw-chip:hover{background:var(--panel2)}
+.mlw-chip svg{width:15px;height:15px;color:var(--muted);display:block}
+.mlw-chip b{font-family:var(--mono);font-weight:600;min-width:30px;text-align:left}
+.mlw-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:background .45s}
+.mlw-pop{position:absolute;right:0;bottom:calc(100% + 8px);width:266px;background:var(--panel);
+  border:1px solid var(--border);border-radius:12px;padding:12px 13px;box-shadow:0 12px 34px rgba(0,0,0,.5)}
+.mlw-pop[hidden]{display:none}
+.mlw-pophead{display:flex;justify-content:space-between;align-items:baseline;font-weight:600;margin-bottom:6px}
+.mlw-pophead .muted{font-size:11px;font-weight:400}
+.mlw-meter{margin:9px 0 7px}
+.mlw-mtop{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+.mlw-mtop .mlw-name{color:var(--muted)}
+.mlw-mtop .mlw-val{font-family:var(--mono)}
+.mlw-bar{height:8px;background:#0d1117;border:1px solid var(--border);border-radius:99px;overflow:hidden}
+.mlw-bar>i{display:block;height:100%;width:0%;background:var(--accent);transition:width .45s ease,background .45s}
+.mlw-sub{font-size:11px;color:var(--muted);margin-top:3px;min-height:1em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-bg.show{display:flex}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;width:720px;max-width:92vw;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+.modal .mhead{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.modal .mbody{padding:14px 18px;overflow:auto}
+.modal .mfoot{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.linkSrc{display:flex;gap:12px;flex-wrap:wrap}
+.linkSrc .lsCard{flex:1;min-width:240px;border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--panel2)}
+.linkSrc .lsHd{font-weight:600;margin-bottom:2px}
+.linkSrc input{margin:4px 0}
+.linkSrc .lsCard>button{margin-top:8px}
+
+/* tree */
+.tree{font-family:var(--mono);font-size:13px;background:#0a0d12;border:1px solid var(--border);border-radius:8px;padding:8px;max-height:48vh;overflow:auto}
+.tnode{display:flex;align-items:center;gap:6px;padding:2px 0;white-space:nowrap}
+.tnode .exp{width:16px;text-align:center;color:var(--muted);cursor:pointer;user-select:none}
+.tnode .nm{cursor:default}
+.tnode .nm.dir{color:#79c0ff}
+.tnode .ignored{color:#6b727c}
+.tchk{width:15px;height:15px;cursor:pointer}
+.chipbar{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.searchhit{border-left:3px solid var(--accent);background:var(--panel2);border-radius:6px;padding:8px 10px;margin-bottom:8px}
+.casehit{border-left:3px solid var(--purple)}
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.node-svc{background:#16263b;border:1px solid #2c4262;border-radius:6px;padding:3px 9px;font-size:12px}
+.arrow{color:var(--muted)}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.toc a{display:block;padding:3px 0}
+.md h1{font-size:22px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.md h2{font-size:18px;margin-top:18px}
+.md h3{font-size:15px}
+.md blockquote{border-left:3px solid var(--accent);margin:8px 0;padding:4px 12px;color:var(--muted);background:var(--panel2)}
+/* glossary verbatim definition + jump-to-source viewer */
+blockquote.glossdef{color:var(--fg);font-size:15px;white-space:pre-wrap}
+/* verbatim Wikipedia quote, original formatting preserved (sanitized server-side) */
+.wikihtml{color:var(--fg);font-size:14.5px;line-height:1.6}
+.wikihtml p{margin:0 0 10px}
+.wikihtml h3,.wikihtml h4{font-size:14px;font-weight:600;margin:16px 0 5px;color:var(--fg);border:none;padding:0}
+.wikihtml ul,.wikihtml ol{margin:6px 0 10px;padding-left:22px}
+.wikihtml li{margin:3px 0}
+.wikihtml code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:12.5px;font-family:var(--mono)}
+.wikihtml dl{margin:6px 0}.wikihtml dt{font-weight:600}.wikihtml dd{margin:0 0 6px 16px}
+.glosssec{margin-top:14px}
+.glosssec>.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 4px}
+.glossfoot{margin-top:16px;padding-top:9px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.55}
+.glossfoot a{color:var(--accent)}
+.wikidot{display:inline-block;margin-left:5px;font-size:9px;font-weight:700;color:var(--green);border:1px solid var(--green);border-radius:3px;padding:0 3px;vertical-align:middle;opacity:.85}
+.srcbox{font-family:var(--mono);font-size:12px;background:#0a0d12;border:1px solid var(--border);border-radius:8px;max-height:62vh;overflow:auto}
+.srcline{display:flex;width:max-content;min-width:100%}
+.srcline .ln{flex:0 0 52px;text-align:right;padding:0 8px;color:#6b727c;user-select:none;border-right:1px solid var(--border);position:sticky;left:0;background:#0a0d12;z-index:1}
+.srcline .lc{padding:0 10px;white-space:pre}
+.srcline.hit{background:#1f2a3a}
+.srcline.hit .ln{color:var(--amber);font-weight:700;background:#11161f}
+/* syntax-highlight tokens (self-contained, no external lib) */
+.tok-kw{color:#ff7b72}.tok-str{color:#a5d6ff}.tok-com{color:#8b949e;font-style:italic}
+.tok-num{color:#d2a8ff}.tok-type{color:#7ee787}.tok-anno{color:#d29922}
+/* ---- code graphs ---- */
+.gtoolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.gtitle{font-weight:600;font-size:13px;color:var(--fg)}
+.gbread{display:flex;align-items:center;gap:5px;font-size:12px;flex-wrap:wrap}
+.gbread a{color:var(--accent);text-decoration:none}.gbread .gsep{color:var(--muted)}
+.gzoom{margin-left:auto;display:flex;gap:4px}
+.grow{display:flex;gap:10px;align-items:stretch}
+.gcanvas{flex:1;height:66vh;background:#0a0d12;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;cursor:grab}
+.gcanvas.grabbing{cursor:grabbing}
+.gnote{position:absolute;left:8px;bottom:6px;font-size:11px;pointer-events:none}
+.ghint{position:absolute;right:8px;bottom:6px;font-size:10px;pointer-events:none;opacity:.65}
+.gdetail{width:300px;min-width:300px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;height:66vh}
+.gsec{margin-top:10px}.gdefs,.gnbrs{display:flex;flex-direction:column;gap:2px;margin-top:4px;max-height:170px;overflow:auto}
+.gdef,.gnbr{font-size:12px;color:var(--accent);text-decoration:none;padding:1px 0}
+.gchip{display:inline-block;margin:2px 4px 2px 0;padding:1px 7px;border:1px solid var(--accent);border-radius:10px;font-size:11px;color:var(--accent);text-decoration:none}
+.gnode{cursor:pointer}.gnode rect{fill:#1c232d;stroke:var(--border);stroke-width:1}
+.gnode.dir rect{fill:#1d2b3a;stroke:#2f4a6b}
+.gnode.entry rect{fill:#16301f;stroke:var(--green)}
+.gnode.center rect,.gnode.sel rect{stroke:var(--accent);stroke-width:2.2}
+.gnode:hover rect{stroke:var(--accent)}
+.gnode .glab{fill:var(--fg);font-size:12px;font-family:var(--mono)}
+.gnode .gdrill{fill:var(--muted);font-size:12px}.gnode .gterm{fill:var(--amber)}
+.gedge{fill:none;stroke:#3b517a;stroke-width:1.3;marker-end:url(#garrow)}
+.gedge.amb{stroke-dasharray:4 3;stroke:#7a6a3a;marker-end:url(#garrowd);opacity:.9}
+.gtog{fill:var(--accent);font-size:13px;cursor:pointer}
+.gnode.more rect{fill:#161b22;stroke:var(--accent);stroke-dasharray:3 2}
+.gnode.more .glab{fill:var(--accent)}
+.gpick{width:222px;min-width:222px;background:var(--panel);border:1px solid var(--border);border-radius:8px;height:66vh;overflow:auto;padding:8px;margin-right:10px}
+.gpickhd{padding:4px 6px 8px;display:flex;justify-content:space-between;align-items:baseline}
+.gpicki{display:block;padding:5px 7px;border-radius:6px;font-size:12px;color:var(--fg);text-decoration:none;font-family:var(--mono)}
+.gpicki:hover{background:var(--panel2)}.gpicki.on{background:var(--accent);color:#fff}
+.gact{cursor:pointer}.gact rect{fill:#1c232d;stroke:var(--border);stroke-width:1}
+.gact .glab{fill:var(--fg);font-size:12px;font-family:var(--mono)}
+.gact.start rect{fill:#16301f;stroke:var(--green)}
+.gact.dec rect{fill:#2a2515;stroke:var(--amber)}
+.gact.loop rect{fill:#152433;stroke:var(--accent)}
+.gact.term rect{fill:#2a1a1a;stroke:var(--red)}
+.gact.drill .glab{text-decoration:underline}
+.gact .gdrill{fill:var(--muted);font-size:12px;cursor:pointer}
+.gactlane{fill:var(--muted);font-size:11px;font-style:italic}
+.glegend{position:absolute;right:8px;top:8px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 11px;font-size:11px;line-height:1.75;max-width:250px;z-index:2}
+.glegend b{display:block;margin-bottom:4px}
+.lgsw{display:inline-block;width:14px;height:10px;border-radius:3px;vertical-align:middle;margin-right:5px;border:1px solid var(--border)}
+.lg-entry,.lg-start{background:#16301f;border-color:var(--green)}.lg-file,.lg-action{background:#1c232d}
+.lg-dec{background:#2a2515;border-color:var(--amber)}.lg-loop{background:#152433;border-color:var(--accent)}.lg-term{background:#2a1a1a;border-color:var(--red)}
+.lgline{display:inline-block;width:18px;border-top:2px solid #3b517a;vertical-align:middle}.lgline.d{border-top:2px dashed #7a6a3a}
+
+/* Ask composer — ONE integrated bordered box (Claude-web style) */
+.ask-wrap{display:flex;flex-direction:column;height:calc(100vh - 230px);min-height:360px}
+.ask-answer{flex:1;overflow:auto;padding:4px 2px 12px}
+.composer{border:1px solid var(--border);border-radius:14px;background:#0d1117;display:flex;flex-direction:column;
+  transition:border-color .15s;margin-top:auto}
+.composer:focus-within{border-color:var(--accent)}
+.composer.disabled{opacity:.6}
+.composer .chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px 0}
+.composer .chips:empty{display:none}
+.chip{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:8px;padding:3px 6px;font-size:12px;max-width:240px}
+.chip img{width:30px;height:30px;object-fit:cover;border-radius:4px}
+.chip .ic{width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:#0d1117;border-radius:4px}
+.chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip .st{color:var(--muted);font-size:10px}
+.chip .rm{cursor:pointer;color:var(--muted);padding:0 2px}
+.chip .rm:hover{color:var(--red)}
+.composer textarea{border:none;background:transparent;color:var(--fg);resize:none;outline:none;width:100%;
+  padding:12px;font:inherit;line-height:1.5;max-height:240px;overflow-y:hidden}
+.composer .crow{display:flex;align-items:center;gap:8px;padding:6px 10px 8px}
+.composer .crow .hint{flex:1;color:var(--muted);font-size:11px;text-align:center}
+.composer .iconbtn{width:30px;height:30px;border-radius:8px;padding:0;font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center}
+.askdrop{outline:2px dashed var(--accent);outline-offset:-4px}
+.src{border:1px solid var(--border);border-radius:8px;margin-bottom:6px;background:var(--panel2)}
+.src>summary{cursor:pointer;padding:6px 10px;font-size:13px;list-style:none}
+.src>summary::-webkit-details-marker{display:none}
+.src[data-kind="user"]{border-left:3px solid var(--purple)}
+.src[data-kind="code"]{border-left:3px solid var(--accent)}
+.src[data-kind="glossary"]{border-left:3px solid var(--green)}
+.src .sbody{padding:0 10px 8px}
+.cite{color:var(--accent);font-weight:600;cursor:pointer}
+/* Ask thread (retained conversation) */
+.ask-answer{display:flex;flex-direction:column;gap:0}
+.askex{background:var(--panel)}
+.askex .qtext{white-space:pre-wrap}
+.askex .extext{margin-top:6px;min-height:1.1em}
+.exstatus a{margin-left:6px;font-size:12px}
+.saveic.saved{color:#7ee787;border-color:#2ea04355}
+.srcwrap{margin-top:2px}
+.srcwrap>summary{cursor:pointer;list-style:none}
+.srcwrap>summary::-webkit-details-marker{display:none}
+.rawmatches{display:none;margin-top:6px}
+.ask-showraw .rawmatches{display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- ACTIVITY BAR (left-edge tool-window switchers, IntelliJ-style) -->
+  <div id="activitybar"></div>
+
+  <!-- LEFT PANEL (content depends on the selected activity-bar icon) -->
+  <div id="leftpanel"><div id="leftBody"></div></div>
+
+  <!-- MAIN (right area: learning progress OR result tabs) -->
+  <div id="main">
+    <div id="topbar">
+      <div id="jobsIndicator" onclick="showLearning()" title="Click to view learning progress"><span class="muted">No active jobs</span></div>
+      <span class="badge" id="embBadge"><span class="dot blue"></span> local</span>
+      <span class="badge" id="serverBadge"><span class="dot"></span> server</span>
+    </div>
+    <div id="content"><div class="empty">Select or create a project to begin.</div></div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-bg" id="modalBg"><div class="modal">
+  <div class="mhead"><span id="modalTitle">Modal</span><button class="small" onclick="closeModal()">✕</button></div>
+  <div class="mbody" id="modalBody"></div>
+  <div class="mfoot" id="modalFoot"></div>
+</div></div>
+
+<!-- MACHINE-LOAD CORNER WIDGET (collapsed chip; click to expand CPU/RAM/VRAM) -->
+<div id="mlWidget"></div>
+
+<script>
+//=================== API helpers ===================
+const API = {
+  async get(u){const r=await fetch(u);if(!r.ok)throw new Error((await r.text())||r.status);return r.json();},
+  async post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(!r.ok)throw new Error((await r.text())||r.status);return r.json();},
+  async put(u,b){const r=await fetch(u,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(!r.ok)throw new Error((await r.text())||r.status);return r.json();},
+  async del(u){const r=await fetch(u,{method:'DELETE'});if(!r.ok)throw new Error(await r.text());return r.json();},
+};
+const $=s=>document.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+let state={projects:[],scope:null,scopeKind:null,activeProject:null,tab:'glossary',view:'home',tool:'project',glossaryTermToSelect:null};
+
+//=================== boot ===================
+async function boot(){
+  renderActivityBar(); setTool('project');
+  await refreshProjects();
+  pollServer(); setInterval(pollServer,4000);
+  pollJobs(); setInterval(pollJobs,3000);
+  startMachineMonitor();
+}
+window.addEventListener('load',boot);
+
+//=================== activity bar + left-panel router ===================
+const SVG_PROJECT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const SVG_MODEL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 1.5v3M12.5 1.5v3M16 1.5v3M9 19.5v3M12.5 19.5v3M16 19.5v3M1.5 9h3M1.5 12.5h3M1.5 16h3M19.5 9h3M19.5 12.5h3M19.5 16h3"/></svg>';
+const SVG_NET='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9S9.5 5.5 12 3z"/></svg>';
+const SVG_CPU='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 1.5v3M15 1.5v3M9 19.5v3M15 19.5v3M1.5 9h3M1.5 15h3M19.5 9h3M19.5 15h3"/></svg>';
+// extensible: add {id,title,svg,render} entries to grow the strip later.
+const TOOLS=[
+  {id:'project',title:'Project',svg:SVG_PROJECT,render:renderProjectTool},
+  {id:'model',  title:'Model',  svg:SVG_MODEL,  render:renderModelTool},
+];
+function renderActivityBar(){
+  const bar=$('#activitybar');
+  bar.innerHTML='<div class="brand" title="OPEN MIND">O</div>'+
+    TOOLS.map(t=>`<button class="act${state.tool===t.id?' active':''}" title="${esc(t.title)}" onclick="setTool('${t.id}')">${t.svg}</button>`).join('')+
+    `<div class="actfoot"><a class="act" href="/netlog" target="_blank" title="Network egress audit log (Invariant 1)">${SVG_NET}</a></div>`;
+}
+function setTool(id){
+  state.tool=id; renderActivityBar();
+  const t=TOOLS.find(x=>x.id===id);
+  if(t&&t.render) t.render();
+}
+// backward-compatible alias used by the server badge / Ask hint
+function showModel(){ setTool('model'); }
+
+//=================== LEFT TOOL: Project ===================
+function renderProjectTool(){
+  $('#leftBody').innerHTML=`
+    <div class="lphead">Project
+      <button class="small primary" onclick="newProject()">+ New</button></div>
+    <div class="lpscroll">
+      <h4>Projects</h4>
+      <div id="projList"></div>
+    </div>`;
+  refreshProjects();
+}
+async function refreshProjects(){
+  const d=await API.get('/projects'); state.projects=d.projects;
+  const c=$('#projList'); if(!c) return;                 // only present on the Project tool
+  c.innerHTML='';
+  if(!d.projects.length) c.appendChild(el('div','muted','<small>no projects yet</small>'));
+  d.projects.forEach(p=>{
+    const it=el('div','listitem'+(state.scope===p.id?' active':''));
+    it.innerHTML=`<span class="name">${esc(p.name)}</span>`+
+      `<span class="row" style="gap:4px;flex:0 0 auto">${stateTag(p.state)}`+
+      `<button class="small" title="Delete project" onclick="event.stopPropagation();deleteProjectUI('${p.id}','${esc(p.name).replace(/'/g,"")}')">🗑</button></span>`;
+    it.onclick=()=>selectProject(p.id);
+    c.appendChild(it);
+  });
+}
+function stateTag(s){const m={init:'',learning:'blue',paused:'amber',ready:'green'};return `<span class="tag ${m[s]||''}">${esc(s)}</span>`;}
+
+function selectProject(id){state.scope=id;state.scopeKind='project';state.activeProject=id;state.view='project';state.tab='glossary';refreshProjects();renderProject();}
+
+//=================== server badge ===================
+async function pollServer(){
+  // continuous sync: the badge always reflects the LATEST probe and converges
+  // to the true state on its own (no stale latch). Decoupled from ingest.
+  try{const s=await API.get('/server/status'); window._serverStatus=s;
+    const b=$('#serverBadge');
+    const map={ready:'green',loading:'amber',starting:'amber',error:'red',stopped:'',not_started:''};
+    let label=s.status;
+    if((s.status==='loading'||s.status==='starting')&&s.elapsed) label+=` ${s.elapsed}s`;
+    if(s.attached) label+=' (attached)';
+    b.innerHTML=`<span class="dot ${map[s.status]||''}"></span> Model: ${esc(label)}`;
+    b.title=s.error
+      ? ('Model server error'+(s.exit_code!=null?' (exit '+s.exit_code+')':'')+': '+s.error+'  — click for settings')
+      : ('Model server — '+s.base_url+'  — click for settings');
+    b.style.cursor='pointer'; b.onclick=showModel;
+  }catch(e){}
+}
+
+//=================== jobs indicator + SSE (Invariant 6) ===================
+let _sse=null,_sseJob=null;
+async function pollJobs(){
+  try{
+    const d=await API.get('/jobs'); window._jobs=d.jobs;
+    // the top indicator tracks LEARNING work (ingest/gendocs); Ask jobs run under
+    // the same worker but are surfaced in the Ask tab itself, not here.
+    const learn=d.jobs.filter(j=>j.type!=='ask');
+    const active=learn.find(j=>j.status==='running'||j.status==='queued');
+    const ind=$('#jobsIndicator');
+    if(active){
+      const pr=active.progress||{};const tot=pr.files_total||pr.pages_total||0;const done=pr.files_done||pr.pages_done||0;
+      const pct=tot?Math.round(done/tot*100):0;
+      ind.innerHTML=`<b>${active.type}</b> <span class="tag blue">${active.status}</span> <span>${esc(active.step||'')}</span>
+        <span class="bar"><i style="width:${pct}%"></i></span><span>${done}/${tot}</span>`;
+      subscribe(active.job_id);
+    }else{
+      const last=learn[0];
+      ind.innerHTML=last?`<span class="muted">last: ${last.type} — ${last.status}</span>`:`<span class="muted">No active jobs</span>`;
+    }
+    if(state.view==='learning') renderLearning();
+  }catch(e){}
+}
+function subscribe(jobId){
+  if(_sseJob===jobId&&_sse)return;
+  if(_sse){_sse.close();_sse=null;}
+  _sseJob=jobId; _sse=new EventSource(`/jobs/${jobId}/stream`);
+  _sse.onmessage=ev=>{try{const job=JSON.parse(ev.data);applyJob(job);}catch(e){}};
+  _sse.addEventListener('end',ev=>{_sse.close();_sse=null;_sseJob=null;pollJobs();refreshProjects();
+    // don't full-rebuild the Ask tab while an Ask is mid-stream (it would tear
+    // down the live EventSource and flash the thread); let it keep streaming.
+    if(state.view==='project'){
+      if(state.tab==='ask' && Object.keys(window._askStreams||{}).length) return;
+      renderProject();
+    }});
+  _sse.onerror=()=>{/* EventSource auto-reconnects */};
+}
+function applyJob(job){
+  if(state.view==='learning')renderLearning();
+  const active=(job.status==='running'||job.status==='queued');
+  if(active){const pr=job.progress||{};const tot=pr.files_total||pr.pages_total||0;const done=pr.files_done||pr.pages_done||0;
+    const pct=tot?Math.round(done/tot*100):0;
+    $('#jobsIndicator').innerHTML=`<b>${job.type}</b> <span class="tag blue">${job.status}</span> <span>${esc(job.step||'')}</span>
+      <span class="bar"><i style="width:${pct}%"></i></span><span>${done}/${tot}</span>`;}
+}
+
+//=================== NEW PROJECT FLOW (folder-tree checkbox picker) ===================
+function newProject(){
+  window._addPathMode=null;   // a create-new flow must never inherit a stale add-path target
+  state.view='newproject';state.scope=null;state.activeProject=null;refreshProjects();
+  const c=$('#content');c.innerHTML='';
+  const card=el('div','card');
+  card.innerHTML=`<h3 id="npTitle">Create Project</h3>
+    <div id="npNameRow"><label>Project name</label><input id="npName" placeholder="orders-platform"/></div>
+    <label>Root folder path (server-side)</label>
+    <div class="row"><input id="npPath" placeholder="C:\\work\\repos"/>
+      <button onclick="browseFolder()" title="Open the system folder picker">📂 Browse…</button>
+      <button onclick="loadTree()">Load tree</button></div>
+    <div id="treeWrap" style="margin-top:12px"></div>`;
+  c.appendChild(card);
+}
+// ---- tri-state tree (Invariant 2) ----
+let tree={root:null,nodes:{},exclude:new Set(),childrenOf:{}};
+function norm(p){return (p||'').replace(/\\/g,'/').replace(/\/+$/,'');}
+function isExcludedByAncestor(p){p=norm(p);for(const e of tree.exclude){if(p===e||p.startsWith(e+'/'))return true;}return false;}
+function anyExcludeUnder(p){p=norm(p);for(const e of tree.exclude){if(e.startsWith(p+'/'))return true;}return false;}
+function nodeState(p){if(isExcludedByAncestor(p))return 'empty';if(anyExcludeUnder(p))return 'indet';return 'checked';}
+
+async function browseFolder(){
+  // Primary: OS-native folder dialog (server runs locally). Fallback: in-app browser.
+  let r=null;
+  try{ r=await API.get('/fs/pick-folder?initial='+encodeURIComponent($('#npPath').value||'')); }catch(e){}
+  if(r&&r.path){ $('#npPath').value=r.path; await loadTree(); return; }
+  // native dialog unavailable (e.g. headless) -> in-app folder browser
+  openFolderBrowser(async(p)=>{ $('#npPath').value=p; closeModal(); await loadTree(); });
+}
+function openFolderBrowser(onPick){
+  showModal('Select folder','<div class="row" style="margin-bottom:8px"><b id="fbCur" class="muted" style="flex:1"></b>'+
+    '<button class="small primary" id="fbUse">Use this folder</button></div><div id="fbBody" class="tree" style="max-height:50vh"></div>',[]);
+  let cur='';
+  async function load(path){
+    const d=await API.get('/fs/tree?path='+encodeURIComponent(path||''));
+    cur=d.path||''; $('#fbCur').textContent=cur||'(drives)';
+    $('#fbUse').disabled=!cur;
+    $('#fbUse').onclick=()=>{ if(cur) onPick(cur); };
+    const b=$('#fbBody'); b.innerHTML='';
+    b.appendChild(rowNav('📁 ..',()=>load(d.parent||'')));
+    if(d.is_root){ (d.entries||[]).forEach(e=>b.appendChild(rowNav('💽 '+e.name,()=>load(e.path)))); return; }
+    (d.entries||[]).filter(e=>e.type==='dir').forEach(e=>
+      b.appendChild(rowNav('📁 '+e.name,()=>load(e.path))));
+  }
+  load($('#npPath')?$('#npPath').value:'');
+}
+
+async function loadTree(){
+  const path=$('#npPath').value.trim(); if(!path){alert('Enter a path');return;}
+  tree={root:norm(path),nodes:{},exclude:new Set(),childrenOf:{}};
+  const d=await API.get('/fs/tree?path='+encodeURIComponent(path));
+  if(d.error){$('#treeWrap').innerHTML='<div class="muted">Error: '+esc(d.error)+'</div>';return;}
+  tree.nodes[tree.root]={path:tree.root,name:path,type:'dir',has_children:true,expanded:true};
+  tree.childrenOf[tree.root]=d.entries.map(e=>{tree.nodes[norm(e.path)]={...e,path:norm(e.path),expanded:false};return norm(e.path);});
+  renderTree();
+}
+function renderTree(){
+  const w=$('#treeWrap');w.innerHTML='';
+  const box=el('div','tree');
+  const hint=el('div','muted','<small>✓ all included · ▣ some included · ☐ excluded. Toggling a folder cascades; selection is stored as an exclude-set.</small>');
+  w.appendChild(hint);
+  renderNode(box,tree.root,0);
+  w.appendChild(box);
+  const foot=el('div','row');foot.style.marginTop='10px';
+  const confirmLabel=window._addPathMode?'Add path →':'Create &amp; learn →';
+  foot.innerHTML=`<button class="primary" onclick="confirmProject()">${confirmLabel}</button>
+    <span class="muted">excluded: <b id="exCount">${tree.exclude.size}</b></span>`;
+  w.appendChild(foot);
+}
+function renderNode(box,path,depth){
+  const n=tree.nodes[path];if(!n)return;
+  const row=el('div','tnode');row.style.paddingLeft=(depth*16)+'px';
+  // expander
+  const exp=el('span','exp',n.type==='dir'?(n.expanded?'▾':'▸'):'');
+  if(n.type==='dir')exp.onclick=()=>toggleExpand(path);
+  row.appendChild(exp);
+  // checkbox tri-state
+  const chk=el('input','tchk');chk.type='checkbox';
+  const st=nodeState(path);chk.checked=(st==='checked');chk.indeterminate=(st==='indet');
+  chk.onclick=(e)=>{e.preventDefault();toggleCheck(path,st);};
+  row.appendChild(chk);
+  const nm=el('span','nm '+(n.type==='dir'?'dir':'')+(n.default_ignored?' ignored':''));
+  nm.textContent=(n.type==='dir'?'📁 ':'📄 ')+n.name+(n.default_ignored?' (auto-ignored)':'');
+  row.appendChild(nm);
+  box.appendChild(row);
+  if(n.type==='dir'&&n.expanded){
+    (tree.childrenOf[path]||[]).forEach(cp=>renderNode(box,cp,depth+1));
+  }
+}
+async function toggleExpand(path){
+  const n=tree.nodes[path];n.expanded=!n.expanded;
+  if(n.expanded&&!tree.childrenOf[path]){
+    const d=await API.get('/fs/tree?path='+encodeURIComponent(path));
+    tree.childrenOf[path]=(d.entries||[]).map(e=>{tree.nodes[norm(e.path)]={...e,path:norm(e.path),expanded:false};return norm(e.path);});
+  }
+  renderTree();
+}
+async function ensureChildren(path){
+  if(!tree.childrenOf[path]){
+    const d=await API.get('/fs/tree?path='+encodeURIComponent(path));
+    tree.childrenOf[path]=(d.entries||[]).map(e=>{tree.nodes[norm(e.path)]={...e,path:norm(e.path),expanded:tree.nodes[norm(e.path)]?.expanded||false};return norm(e.path);});
+  }
+  return tree.childrenOf[path];
+}
+async function toggleCheck(path,st){
+  path=norm(path);
+  const include=(st!=='checked'); // checked -> exclude; empty/indet -> include all
+  // drop any excludes at/under this node
+  for(const e of [...tree.exclude]) if(e===path||e.startsWith(path+'/')) tree.exclude.delete(e);
+  if(include){
+    await carveInclude(path);
+  }else{
+    if(!isExcludedByAncestor(path)) tree.exclude.add(path);
+  }
+  $('#exCount')&&($('#exCount').textContent=tree.exclude.size);
+  renderTree();
+}
+// re-include a node inside an excluded subtree: convert ancestor folder-excludes
+// into per-sibling excludes along the path (keeps exclude-set consistent, Invariant 2).
+async function carveInclude(path){
+  while(true){
+    let anc=null;
+    for(const e of tree.exclude){ if(path.startsWith(e+'/')){ if(!anc||e.length>anc.length)anc=e; } }
+    if(!anc)break;
+    tree.exclude.delete(anc);
+    // walk from anc down toward path, excluding siblings off the path
+    let cur=anc;
+    while(cur!==path && path.startsWith(cur+'/')){
+      const kids=await ensureChildren(cur);
+      // next step toward path
+      let next=null;
+      for(const k of kids){ if(k===path||path.startsWith(k+'/')){next=k;break;} }
+      for(const k of kids){ if(k!==next) tree.exclude.add(k); }
+      if(!next)break;
+      cur=next;
+    }
+  }
+}
+async function confirmProject(){
+  const name=$('#npName').value.trim()||'project';
+  const p=await API.post('/projects',{name,path:tree.root,exclude:[...tree.exclude]});
+  await refreshProjects(); selectProject(p.id);
+  startAnalysis();   // "Create & learn": kick off ingest immediately after creation
+}
+
+//=================== PROJECT VIEW (right main: result tabs) ===================
+async function renderProject(){
+  const c=$('#content');c.innerHTML='';
+  const proj=state.activeProject?await API.get('/projects/'+state.activeProject).catch(()=>null):null;
+  // most-recent ingest/gendocs job for this project — drives the header Pause/Resume
+  let pjob=null;
+  if(proj){
+    const jr=await API.get('/jobs?scope='+encodeURIComponent(proj.id)).catch(()=>({jobs:[]}));
+    const lj=(jr.jobs||[]).filter(j=>j.type!=='ask');
+    pjob=lj.find(j=>['running','queued','paused','interrupted'].includes(j.status))||lj[0]||null;
+  }
+  // header
+  const h=el('div','card');
+  if(proj){
+    const learning=(proj.state==='learning'||proj.state==='paused');
+    const canPause=pjob&&['running','queued'].includes(pjob.status);
+    const canResume=(pjob&&['paused','interrupted','failed'].includes(pjob.status))||proj.state==='paused';
+    h.innerHTML=`<div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">${esc(proj.name)} ${stateTag(proj.state)}</h3>
+      <div class="row">
+        <button class="${canResume?'':'primary'}" onclick="startAnalysis()">▶ Start / Re-learn</button>
+        ${canPause?`<button class="js-pause" title="Pause learning at the next safe checkpoint — partial data is kept and it stays resumable">⏸ Pause</button>`:''}
+        ${canResume?`<button class="primary js-resume" title="Resume the paused/interrupted learning from its last checkpoint">▶ Resume</button>`:''}
+        <button onclick="addPath()">+ Add path</button>
+        <button class="danger" onclick="terminateProject()" title="Wipe learned data, keep the project">Terminate</button>
+        <button class="danger js-del-proj" title="Delete the project entirely">Delete</button>
+      </div></div>
+      ${learning?`<div class="muted" style="margin-top:6px">Learning in progress — <a href="#" onclick="showLearning();return false;">view progress &amp; machine load →</a></div>`:''}
+      <div class="kv" style="margin-top:8px">
+        <b>State</b><span>${proj.state}</span>
+        <b>Code chunks</b><span>${proj.code_chunks}</span>
+        <b>Files indexed</b><span>${proj.files_indexed}</span>
+      </div>
+      <div style="margin-top:8px"><b class="muted">Paths &amp; selection:</b>
+        ${(proj.paths||[]).map(p=>`<div class="row" style="margin-top:4px"><code>${esc(p.path)}</code>
+          <span class="tag">${(p.exclude||[]).length} excluded</span>
+          <button class="small js-edit-path" data-path="${esc(p.path)}">edit</button></div>`).join('')||'<span class="muted">no paths — add one</span>'}
+      </div>`;
+  }
+  c.appendChild(h);
+  // Wire header actions via closures (NOT inline onclick string interpolation) so a
+  // repo path / name containing a single quote can never break out of a JS string.
+  if(proj){
+    const del=h.querySelector('.js-del-proj'); if(del) del.onclick=()=>deleteProjectUI(proj.id,proj.name);
+    const pb=h.querySelector('.js-pause'); if(pb) pb.onclick=()=>projPause(pjob&&pjob.job_id);
+    const rb=h.querySelector('.js-resume'); if(rb) rb.onclick=()=>projResume(pjob&&pjob.job_id);
+    h.querySelectorAll('.js-edit-path').forEach(b=>{b.onclick=()=>editSelection(b.dataset.path);});
+  }
+  // result tabs: Glossary · Documentation · Ask · Cases
+  const avail=['glossary','graphs'];
+  const labels={glossary:'Glossary',graphs:'Graphs'};
+  if(!avail.includes(state.tab)) state.tab='glossary';
+  const tabs=el('div','tabs');
+  avail.forEach(t=>{
+    const b=el('button',state.tab===t?'active':'',labels[t]);
+    b.onclick=()=>{state.tab=t;renderProject();};tabs.appendChild(b);
+  });
+  c.appendChild(tabs);
+  const body=el('div');body.id='tabBody';c.appendChild(body);
+  body.innerHTML='<div class="muted">loading…</div>';
+  try{
+    if(state.tab==='glossary')await tabGlossary(body);
+    else if(state.tab==='graphs')await tabGraphs(body);
+  }catch(e){body.innerHTML='<div class="muted">'+esc(e.message)+'</div>';}
+}
+
+async function startAnalysis(){
+  const pid=state.activeProject;
+  const proj=await API.get('/projects/'+pid);
+  if(!(proj.paths||[]).length){alert('Add a path first.');return;}
+  // ensure model server ready (best-effort); ingest proceeds either way (Invariant: surface errors)
+  let s=window._serverStatus||await API.get('/server/status');
+  if(s.status!=='ready'){
+    if(confirm('Model server is "'+s.status+'". Start it now and wait for ready before ingesting?\n(OK = start & wait, Cancel = ingest now with deterministic summaries)')){
+      await API.post('/server/start',{});
+      showLearning();
+      const ok=await waitServerReady(120);
+      if(!ok){alert('Server not ready (see Model log). Ingesting now with deterministic summaries.');}
+    }
+  }
+  await API.post('/ingest',{project_id:pid});
+  await refreshProjects(); selectProject(pid); showLearning(); pollJobs();
+}
+async function waitServerReady(sec){
+  for(let i=0;i<sec;i++){const s=await API.get('/server/status');window._serverStatus=s;
+    if(s.status==='ready')return true; if(s.status==='error')return false;
+    if(state.tool==='model')renderModelLog(s); await new Promise(r=>setTimeout(r,1000));}
+  return false;
+}
+async function addPath(){
+  const pid=state.activeProject; // capture BEFORE newProject() nulls state.activeProject
+  newProject(); // reuse tree picker, but bind confirm to add-path
+  $('#npTitle').textContent='Add path to project';
+  $('#npNameRow').style.display='none';   // hide ONLY the name field, keep path+tree+confirm
+  window._addPathMode=pid;
+}
+async function editSelection(path){
+  const pid=state.activeProject;
+  state.view='newproject';const c=$('#content');c.innerHTML='';
+  const card=el('div','card');card.innerHTML='<h3>Edit selection</h3><div id="treeWrap"></div>';c.appendChild(card);
+  const proj=await API.get('/projects/'+pid);
+  const spec=(proj.paths||[]).find(p=>norm(p.path)===norm(path));
+  tree={root:norm(path),nodes:{},exclude:new Set((spec?.exclude||[]).map(norm)),childrenOf:{}};
+  const d=await API.get('/fs/tree?path='+encodeURIComponent(path));
+  tree.nodes[tree.root]={path:tree.root,name:path,type:'dir',has_children:true,expanded:true};
+  tree.childrenOf[tree.root]=d.entries.map(e=>{tree.nodes[norm(e.path)]={...e,path:norm(e.path),expanded:false};return norm(e.path);});
+  renderTree();
+  // override confirm
+  $('#treeWrap').querySelector('button.primary').textContent='Save selection';
+  $('#treeWrap').querySelector('button.primary').onclick=async()=>{
+    await API.post('/projects/'+pid+'/selection',{path:tree.root,exclude:[...tree.exclude]});
+    selectProject(pid);
+  };
+}
+// override confirmProject when in add-path mode
+const _origConfirm=confirmProject;
+confirmProject=async function(){
+  if(window._addPathMode){
+    const pid=window._addPathMode;window._addPathMode=null;
+    await API.post('/projects/'+pid+'/paths',{path:tree.root,exclude:[...tree.exclude]});
+    selectProject(pid);return;
+  }
+  return _origConfirm();
+};
+
+async function deleteProjectUI(pid, name){
+  if(!pid) return;
+  showModalConfirm('Delete project',
+    `<p>Permanently delete <b>${esc(name||'this project')}</b>? This removes the project, its code/cases collections, the glossary, and all learned data. This cannot be undone.</p>`,
+    async()=>{
+      await API.del('/projects/'+pid);
+      closeModal();
+      if(state.scope===pid||state.activeProject===pid){
+        state.scope=null;state.activeProject=null;state.view='home';
+        $('#content').innerHTML='<div class="empty">Select or create a project to begin.</div>';
+      }
+      await refreshProjects();
+    }, 'Deleting…');
+}
+
+async function terminateProject(){
+  const pid=state.activeProject;
+  showModalConfirm('Terminate project',
+    `<p>This wipes the project to <b>init</b>: empties the code collection, deletes map/docs, clears file hashes, ingested paths &amp; selection. The project entity is kept.</p>
+     <label class="row"><input type="checkbox" id="clrCases" style="width:auto"/> Also clear solved cases (otherwise kept but flagged stale)</label>`,
+    async()=>{await API.post('/projects/'+pid+'/terminate',{clear_cases:$('#clrCases').checked});closeModal();await refreshProjects();selectProject(pid);});
+}
+
+// Header Pause/Resume — mirrors the Learning-page controls but acts on the
+// project currently in view. Re-render the header + sidebar so the new state
+// (and the swapped Pause⇄Resume button) shows immediately.
+async function projPause(jobId){
+  if(!jobId) return;
+  await API.post('/jobs/'+jobId+'/pause',{});
+  await refreshProjects(); await renderProject(); pollJobs();
+}
+async function projResume(jobId){
+  if(jobId){
+    await API.post('/jobs/'+jobId+'/resume',{});
+    await refreshProjects(); await renderProject(); pollJobs();
+  }else{
+    startAnalysis();   // paused with no resumable job on record → start a fresh learn
+  }
+}
+
+//=================== TAB: Glossary (deterministic term/acronym index) ===================
+// Term list (left) + term detail (right): each definition is the VERBATIM text
+// extracted from an authoritative source, shown with its file:line and a working
+// jump-to-source link. Definitions are never model-generated. Terms mentioned
+// inside a definition are cross-linked (navigation only — no generation).
+async function tabGlossary(body){
+  let d; try{ d=await API.get('/glossary?scope='+state.scope); }catch(e){ d={terms:{},count:0}; }
+  const terms=d.terms||{};
+  const names=Object.keys(terms);
+  window._glossaryTerms=names;   // used for cross-linking definitions
+  window._glossaryWiki=new Set(d.wiki||[]);   // terms carrying a Wikipedia standard definition
+  if(!names.length){
+    body.innerHTML='<div class="empty">No glossary terms found for this scope.<br>'+
+      'Open Mind extracts term/acronym definitions <b>verbatim</b> from authoritative sources '+
+      '(GLOSSARY files, definition tables, README/docs, doc-comments) — it never fabricates them.<br>'+
+      'If this project has no such sources, the glossary is honestly empty. Add definition sources and '+
+      'run <b>Start / Re-learn</b>.</div>';
+    return;
+  }
+  body.innerHTML=`<div class="row" style="align-items:flex-start;gap:16px">
+    <div class="card" style="width:300px;min-width:300px">
+      <div class="row" style="justify-content:space-between"><b>Terms <span class="muted">${names.length}</span></b></div>
+      <input id="glossFilter" placeholder="filter terms…" style="margin:8px 0"/>
+      <div class="toc" id="glossToc"></div></div>
+    <div class="card" style="flex:1"><div id="glossView" class="md">
+      <div class="muted">Select a term to see its verbatim definition and source.</div></div></div>
+  </div>`;
+  const toc=$('#glossToc');
+  function renderToc(filter){
+    const f=(filter||'').toLowerCase();
+    toc.innerHTML='';
+    const shown=names.filter(t=>!f || t.toLowerCase().includes(f)
+                                  || String(terms[t]||'').toLowerCase().includes(f));
+    if(!shown.length){ toc.innerHTML='<div class="muted"><small>no match</small></div>'; return; }
+    shown.forEach(t=>{
+      const a=el('a','');a.href='#';
+      const wb=window._glossaryWiki&&window._glossaryWiki.has(t)?'<span class="wikidot" title="standard definition from Wikipedia">W</span>':'';
+      a.innerHTML=`<b>${esc(t)}</b>${wb} <span class="muted">${esc(String(terms[t]||'').slice(0,46))}</span>`;
+      a.onclick=e=>{e.preventDefault();openTerm(t);};
+      toc.appendChild(a);
+    });
+  }
+  renderToc('');
+  $('#glossFilter').addEventListener('input',e=>renderToc(e.target.value));
+  const pending=state.glossaryTermToSelect; state.glossaryTermToSelect=null;
+  openTerm(pending && names.includes(pending) ? pending : names[0]);
+}
+async function openTerm(term){
+  const view=$('#glossView'); if(!view) return;
+  let d; try{ d=await API.get('/glossary?scope='+state.scope+'&term='+encodeURIComponent(term)); }
+  catch(e){ view.innerHTML='<div class="muted">'+esc(e.message)+'</div>'; return; }
+  if(!d.found){
+    view.innerHTML=`<h2>${esc(term)}</h2>
+      <div class="empty">No authoritative definition found for “${esc(term)}” in the indexed project.</div>`;
+    return;
+  }
+  const loc=esc(d.source_file||'')+' : '+esc(d.line_number);
+  const inproject=`
+    <div class="kv" style="margin-top:10px">
+      <b>Source</b><span><code>${loc}</code> &nbsp;<a href="#" id="glossJump">jump to source →</a></span>
+      <b>Content hash</b><span><code>${esc(String(d.content_hash||'').slice(0,12))}</code></span>
+    </div>`;
+  if(d.standard_definition){
+    const title=esc(d.standard_title||d.term), url=d.standard_url||'';
+    const link=url?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Wikipedia: ${title} ↗</a>`:`Wikipedia: ${title}`;
+    const got=d.standard_retrieved?` <span class="muted">Retrieved ${esc(d.standard_retrieved)}.</span>`:'';
+    view.innerHTML=`
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <h2 style="margin:0">${esc(d.term)}</h2>
+        <span class="tag">standard · Wikipedia</span>
+      </div>
+      ${d.standard_html
+        ? `<div class="wikihtml">${d.standard_html}</div>`
+        : `<blockquote class="glossdef">${crossLink(d.standard_definition||'',d.term)}</blockquote>`}
+      <div class="glosssec">
+        <div class="lbl">In this project${d.source_kind?` · ${esc(d.source_kind)}`:''}</div>
+        <blockquote class="glossdef" style="border-left-color:var(--green);font-size:14px">${crossLink(d.definition||'',d.term)}</blockquote>
+        ${inproject}
+      </div>
+      ${usageBlock(d.usage)}
+      <div class="glossfoot">Open Mind quoted the above from Wikipedia (lead + key sections, verbatim) via its <b>search skill</b> — ${link}.${got}</div>`;
+  } else {
+    view.innerHTML=`
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <h2 style="margin:0">${esc(d.term)}</h2>
+        ${d.source_kind?`<span class="tag">${esc(d.source_kind)}</span>`:''}
+      </div>
+      <blockquote class="glossdef">${crossLink(d.definition||'',d.term)}</blockquote>
+      ${inproject}
+      ${usageBlock(d.usage)}
+      <div class="muted" style="margin-top:8px;font-size:12px">Verbatim definition extracted from the source above — never model-generated.</div>`;
+  }
+  const jump=$('#glossJump'); if(jump) jump.onclick=e=>{e.preventDefault();openSource(d.source_file,d.line_number);};
+  // wire term cross-links (navigation only)
+  view.querySelectorAll('.xterm').forEach(s=>{ s.onclick=()=>openTerm(s.dataset.term); });
+  // wire usage-profile source links (jump to the real file:line)
+  view.querySelectorAll('.usrc').forEach(s=>{ s.onclick=e=>{e.preventDefault();openSource(s.dataset.f,+s.dataset.l||1);}; });
+}
+
+// Deterministic usage profile, rendered from the structure-map data the backend
+// attached (defined-at / used-in / modules / related terms). Every file link jumps
+// to real source; nothing here is generated.
+function usageBlock(u){
+  if(!u) return '';
+  const parts=[];
+  if(u.is_code_symbol && (u.defined_at||[]).length){
+    const defs=u.defined_at.map(x=>`<a href="#" class="usrc" data-f="${esc(x.file)}" data-l="${x.line}"><code>${esc(x.file)}:${x.line}</code></a> <span class="muted">(${esc(x.kind)})</span>`).join('<br>');
+    parts.push(`<div><b>Defined</b><br>${defs}</div>`);
+  }
+  if((u.used_in||[]).length){
+    const shown=u.used_in.slice(0,8).map(f=>`<a href="#" class="usrc" data-f="${esc(f)}" data-l="1"><code>${esc(f)}</code></a>`).join('<br>');
+    const more=u.use_count>8?`<div class="muted">+${u.use_count-8} more</div>`:'';
+    parts.push(`<div><b>Used in ${u.use_count} file${u.use_count===1?'':'s'}</b><br>${shown}${more}</div>`);
+  }
+  if((u.modules||[]).length) parts.push(`<div><b>Modules</b> <span class="muted">${u.modules.map(esc).join(' · ')}</span></div>`);
+  if((u.related_terms||[]).length){
+    const rel=u.related_terms.map(t=>`<a href="#" class="xterm" data-term="${esc(t)}">${esc(t)}</a>`).join(', ');
+    parts.push(`<div><b>Related</b> ${rel}</div>`);
+  }
+  if(!parts.length) return '';
+  return `<div class="glosssec"><div class="lbl">Usage profile · grounded in the structure map (deterministic, traceable)</div>
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;margin-top:6px">${parts.join('')}</div></div>`;
+}
+// wrap occurrences of OTHER known glossary terms in a clickable cross-link. We
+// split the RAW text on whole-word matches and escape each segment, so HTML
+// entities are never corrupted and nothing here triggers generation.
+function crossLink(text,selfTerm){
+  const terms=(window._glossaryTerms||[]).filter(t=>t && t!==selfTerm);
+  if(!terms.length) return esc(text);
+  terms.sort((a,b)=>b.length-a.length);   // longest-first so phrases beat parts
+  const alt=terms.map(t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+  let re; try{ re=new RegExp('\\b('+alt+')\\b','g'); }catch(e){ return esc(text); }
+  let out='',last=0,m;
+  while((m=re.exec(text))!==null){
+    out+=esc(text.slice(last,m.index));
+    const g=m[0];
+    const canon=terms.find(t=>t.toLowerCase()===g.toLowerCase())||g;
+    out+=`<span class="cite xterm" data-term="${esc(canon)}" title="glossary: ${esc(canon)}">${esc(g)}</span>`;
+    last=m.index+g.length;
+    if(re.lastIndex===m.index) re.lastIndex++;   // guard against zero-width
+  }
+  out+=esc(text.slice(last));
+  return out;
+}
+// jump-to-source viewer: shows the real file around the definition's line, with
+// that line highlighted, served by the local /source endpoint (allow-listed).
+// ---- self-contained syntax highlighter (no external lib; cosmetic) ----
+const HL_KW=new Set(('abstract as assert async await boolean break byte case catch char class const continue def default do double elif else enum export extends false final finally float fn for from func function global goto if impl implements import in instanceof int interface internal is lambda let long match module mut namespace native new nil none not null object or override package pass private protected public raise record return sealed short static struct super switch synchronized this throw throws trait transient true try type typeof union unsafe use val var void volatile when where while with yield').split(' '));
+function _commentStyle(ext){
+  const e=(ext||'').toLowerCase();
+  if(['py','rb','yml','yaml','properties','toml','sh'].includes(e)) return {line:['#'],block:null};
+  if(e==='sql') return {line:['--'],block:['/*','*/']};
+  if(['html','htm','xml','vue','svelte'].includes(e)) return {line:[],block:['<!--','-->']};
+  return {line:['//'],block:['/*','*/']};   // C-like default
+}
+function highlightLine(text,cs,st){
+  let out='',i=0; const n=text.length;
+  if(st.block){
+    const e=cs.block?text.indexOf(cs.block[1]):-1;
+    if(!cs.block||e===-1) return '<span class="tok-com">'+esc(text)+'</span>';
+    out+='<span class="tok-com">'+esc(text.slice(0,e+cs.block[1].length))+'</span>'; i=e+cs.block[1].length; st.block=false;
+  }
+  while(i<n){
+    const rest=text.slice(i), ch=text[i];
+    let lc=null; for(const c of cs.line){ if(rest.startsWith(c)){lc=c;break;} }
+    if(lc){ out+='<span class="tok-com">'+esc(text.slice(i))+'</span>'; break; }
+    if(cs.block && rest.startsWith(cs.block[0])){
+      const e=text.indexOf(cs.block[1],i+cs.block[0].length);
+      if(e===-1){ out+='<span class="tok-com">'+esc(text.slice(i))+'</span>'; st.block=true; break; }
+      out+='<span class="tok-com">'+esc(text.slice(i,e+cs.block[1].length))+'</span>'; i=e+cs.block[1].length; continue;
+    }
+    if(ch==='"'||ch==="'"||ch==='`'){
+      let j=i+1; while(j<n){ if(text[j]==='\\'){j+=2;continue;} if(text[j]===ch){j++;break;} j++; }
+      out+='<span class="tok-str">'+esc(text.slice(i,j))+'</span>'; i=j; continue;
+    }
+    if(ch==='@' && /[A-Za-z_]/.test(text[i+1]||'')){
+      let j=i+1; while(j<n && /[\w.]/.test(text[j])) j++;
+      out+='<span class="tok-anno">'+esc(text.slice(i,j))+'</span>'; i=j; continue;
+    }
+    if(/[0-9]/.test(ch) || (ch==='.'&&/[0-9]/.test(text[i+1]||''))){
+      let j=i; while(j<n && /[0-9a-fA-FxXlLfFdD._]/.test(text[j])) j++;
+      out+='<span class="tok-num">'+esc(text.slice(i,j))+'</span>'; i=j; continue;
+    }
+    if(/[A-Za-z_$]/.test(ch)){
+      let j=i; while(j<n && /[\w$]/.test(text[j])) j++;
+      const w=text.slice(i,j);
+      const kls=HL_KW.has(w)?'tok-kw':(/^[A-Z][A-Za-z0-9_]*$/.test(w)?'tok-type':'');
+      out+= kls?('<span class="'+kls+'">'+esc(w)+'</span>'):esc(w); i=j; continue;
+    }
+    out+=esc(ch); i++;
+  }
+  return out;
+}
+
+async function openSource(file,line){
+  const fname=String(file||'').split('/').pop();
+  const ext=fname.includes('.')?fname.split('.').pop():'';
+  showModal('Source — '+fname+':'+line,'<div id="srcView" class="muted">loading…</div>',[]);
+  let d;
+  try{
+    d=await API.get('/source?scope='+state.scope+'&file='+encodeURIComponent(file)+'&line='+(line||0));
+  }catch(e){ const v=$('#srcView'); if(v) v.innerHTML='<div class="muted">could not load source: '+esc(e.message)+'</div>'; return; }
+  // no local copy (and no working link yet) -> offer to link the project's source
+  if(d.status==='needs_link'||d.status==='error'){ renderLinkSource(d,file,line); return; }
+  const cs=_commentStyle(ext), st={block:false};
+  const rows=(d.lines||[]).map(L=>{
+    const hit=(L.n===d.line);
+    return `<div class="srcline${hit?' hit':''}"><span class="ln">${L.n}</span><span class="lc">${highlightLine(String(L.text==null?'':L.text),cs,st)}</span></div>`;
+  }).join('');
+  const via=d.origin==='github'?' &nbsp;<span class="tag">via GitHub</span>':'';
+  $('#srcView').innerHTML=`<div class="muted" style="margin-bottom:6px"><code>${esc(file)}</code> · line ${esc(d.line)} of ${esc(d.total)}${via}</div><div class="srcbox">${rows}</div>`;
+  const hit=document.querySelector('#srcView .srcline.hit'); if(hit) hit.scrollIntoView({block:'center'});
+}
+
+// Shown when a file has no local copy and no working link: offer to link the
+// project's source via GitHub (fetched on demand, audited) or a local folder. On
+// success we re-call openSource() so the file opens immediately. The link is saved
+// machine-locally (POST /projects/{id}/source-link), never in the portable data/.
+function renderLinkSource(d,file,line){
+  const v=$('#srcView'); if(!v) return;
+  const pid=d.project_id||state.scope;
+  const gh=d.github||{};
+  const ghUrl=esc(gh.url||''), ghRef=esc(gh.ref&&gh.ref!=='HEAD'?gh.ref:'');
+  const note=d.status==='error'
+    ? `<div class="muted" style="color:#e06c6c;margin-bottom:10px">${esc(d.reason||'could not open from the linked source')}</div>`
+    : `<div class="muted" style="margin-bottom:10px">No local copy of this file is on this machine. Link the project's source to open it.</div>`;
+  v.innerHTML=note+
+    `<div class="linkSrc">
+       <div class="lsCard">
+         <div class="lsHd">⛓ Link to GitHub</div>
+         <div class="muted" style="font-size:12px;margin:2px 0 6px">Fetched on demand from raw.githubusercontent.com (audited egress).</div>
+         <input id="lsUrl" type="text" placeholder="https://github.com/owner/repo" value="${ghUrl}"/>
+         <input id="lsRef" type="text" placeholder="branch / tag / commit (optional)" value="${ghRef}"/>
+         <button class="primary" id="lsGh">Link &amp; open</button>
+       </div>
+       <div class="lsCard">
+         <div class="lsHd">📁 Link to local folder</div>
+         <div class="muted" style="font-size:12px;margin:2px 0 6px">Point at a local checkout; saved as this project's source root.</div>
+         <div class="row" style="gap:6px"><input id="lsPath" type="text" placeholder="C:\\path\\to\\repo" style="flex:1"/><button class="small" id="lsPick">Browse…</button></div>
+         <button class="primary" id="lsLocal">Link &amp; open</button>
+       </div>
+     </div>
+     <div id="lsErr" class="muted" style="color:#e06c6c;margin-top:8px"></div>`;
+  const setErr=m=>{ const e=$('#lsErr'); if(e) e.textContent=m||''; };
+  async function link(body,btn){
+    setErr(''); const orig=btn.textContent; btn.disabled=true; btn.textContent='Linking…';
+    try{ await API.post('/projects/'+encodeURIComponent(pid)+'/source-link',body); await openSource(file,line); }
+    catch(e){ btn.disabled=false; btn.textContent=orig; setErr((e&&e.message)?e.message:String(e)); }
+  }
+  $('#lsGh').onclick=()=>{ const url=$('#lsUrl').value.trim(); if(!url){ setErr('Enter a GitHub repo URL'); return; }
+    link({kind:'github',url,ref:$('#lsRef').value.trim()||null},$('#lsGh')); };
+  $('#lsLocal').onclick=()=>{ const path=$('#lsPath').value.trim(); if(!path){ setErr('Choose a local folder'); return; }
+    link({kind:'local',path},$('#lsLocal')); };
+  $('#lsPick').onclick=async()=>{
+    // OS-native folder dialog first; fall back to the in-app browser (replaces the
+    // modal, so on pick we link directly and re-open the file).
+    let r=null; try{ r=await API.get('/fs/pick-folder?initial='+encodeURIComponent($('#lsPath').value||'')); }catch(e){}
+    if(r&&r.path){ $('#lsPath').value=r.path; return; }
+    openFolderBrowser(async(p)=>{
+      try{ await API.post('/projects/'+encodeURIComponent(pid)+'/source-link',{kind:'local',path:p}); await openSource(file,line); }
+      catch(e){ showModal('Link source','<div class="muted" style="color:#e06c6c">'+esc((e&&e.message)?e.message:String(e))+'</div>',[]); }
+    });
+  };
+}
+
+//=================== TAB: Graphs (call mind-map) ===================
+// An expandable mind-map: root hubs/entry points → callees, lazy, 7-at-a-time.
+// Everything is derived from the deterministic structure map — never fabricated.
+const G_NW=176, G_NH=32, G_COLW=234, G_ROWH=50;
+
+async function tabGraphs(body){
+  if(!window._g) window._g={kind:'call'};
+  const g=window._g;
+  body.innerHTML=`
+    <div class="gtoolbar">
+      <div class="gtitle">Call graph</div>
+      <div class="gbread" id="gBread"></div>
+      <button class="small" id="gLegendBtn">legend</button>
+      <div class="gzoom">
+        <button class="small" id="gZoomOut" title="zoom out">−</button>
+        <button class="small" id="gZoomIn" title="zoom in">+</button>
+        <button class="small" id="gFitBtn">fit</button>
+      </div>
+    </div>
+    <div class="grow">
+      <div class="gcanvas" id="gCanvas">
+        <svg id="gSvg" width="100%" height="100%">
+          <defs>
+            <marker id="garrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 z" fill="#4b78c7"></path></marker>
+            <marker id="garrowd" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 z" fill="#7a6a3a"></path></marker>
+          </defs>
+          <g id="gView"><g id="gEdges"></g><g id="gNodes"></g></g>
+        </svg>
+        <div class="gnote muted" id="gNote"></div>
+        <div class="ghint muted">scroll = zoom · drag = pan</div>
+        <div class="glegend" id="gLegend" hidden></div>
+      </div>
+      <div class="gdetail" id="gDetail" hidden></div>
+    </div>`;
+  $('#gZoomIn').onclick=()=>_gZoomBy(1.2); $('#gZoomOut').onclick=()=>_gZoomBy(1/1.2); $('#gFitBtn').onclick=()=>_gFit();
+  $('#gLegendBtn').onclick=()=>{ const l=$('#gLegend'); if(l) l.hidden=!l.hidden; };
+  _gWirePanZoom();
+  _gReset(); await _gLoad();
+}
+
+function _gReset(){ const g=window._g; g.scale=1; g.tx=14; g.ty=14; g.sel=null; const d=$('#gDetail'); if(d) d.hidden=true; }
+function _gNote(t){ const n=$('#gNote'); if(n) n.textContent=t||''; }
+function _gClear(){ const e=$('#gEdges'),n=$('#gNodes'); if(e)e.innerHTML=''; if(n)n.innerHTML=''; }
+function _gApply(){ const g=window._g, v=$('#gView'); if(v) v.setAttribute('transform',`translate(${g.tx},${g.ty}) scale(${g.scale})`); }
+
+async function _gLoad(){
+  _gLegend();
+  return _gCallRoots();
+}
+
+function _gLegend(){
+  const l=$('#gLegend'); if(!l) return;
+  l.innerHTML=`<b>Legend — call mind-map</b>
+    <div><span class="lgsw lg-entry"></span> entry / hub</div>
+    <div><span class="lgsw lg-file"></span> callee file</div>
+    <div>▶/▼ expand callees (7 at a time, “+ more”)</div>
+    <div><span class="lgline"></span> calls &nbsp; <span class="lgline d"></span> relation between roots</div>`;
+}
+
+// ======================= CALL: expandable mind-map (#6 / #7) =======================
+async function _gCallRoots(){
+  const g=window._g; const pk=$('#gPick'); if(pk) pk.hidden=true;
+  $('#gBread').innerHTML='';
+  _gNote('loading…');
+  let d; try{ d=await API.get('/graph?scope='+encodeURIComponent(state.scope)+'&kind=call'); }
+  catch(e){ _gNote('error: '+esc(e.message)); return; }
+  g.troots=(d.roots||[]).map(r=>_tnode(r)); g.tlinks=d.links||[];
+  if(!g.troots.length){ _gClear(); _gNote(d.note||'no source files'); return; }
+  _gRenderTree(); _gFit(); _gNote(d.note||'');
+}
+function _tnode(r){ return {...r, _depth:0, _exp:false, _kids:null, _off:0, _more:false}; }
+
+async function _gExpand(node){
+  if(node._kids===null){
+    try{
+      const r=await API.get('/graph/children?scope='+encodeURIComponent(state.scope)+'&id='+encodeURIComponent(node.id)+'&offset=0&limit=7');
+      node._kids=(r.children||[]).map(_tnode); node._off=(r.children||[]).length; node._more=!!r.hasMore;
+    }catch(e){ node._kids=[]; }
+  }
+  node._exp=true; _gRenderTree();
+}
+function _gCollapse(node){ node._exp=false; _gRenderTree(); }
+async function _gMore(node){
+  try{
+    const r=await API.get('/graph/children?scope='+encodeURIComponent(state.scope)+'&id='+encodeURIComponent(node.id)+'&offset='+node._off+'&limit=7');
+    (r.children||[]).forEach(c=>node._kids.push(_tnode(c))); node._off+=(r.children||[]).length; node._more=!!r.hasMore;
+  }catch(e){}
+  _gRenderTree();
+}
+
+function _gFlattenTree(){
+  const rows=[];
+  function walk(node,depth){
+    node._depth=depth; rows.push(node);
+    if(node._exp && node._kids){
+      node._kids.forEach(k=>walk(k,depth+1));
+      if(node._more) rows.push({_moreFor:node,_depth:depth+1,id:'__more__'+node.id,label:'+ more'});
+    }
+  }
+  window._g.troots.forEach(r=>walk(r,0));
+  return rows;
+}
+
+function _gRenderTree(){
+  const g=window._g, rows=_gFlattenTree();
+  const id2pos={};
+  rows.forEach((n,i)=>{ n._x=n._depth*G_COLW+20; n._y=i*G_ROWH+20; id2pos[n.id]=n; });
+  // edges: parent -> child (solid) ; root <-> root relations (dashed)
+  let ep='';
+  rows.forEach(n=>{
+    if(n._exp && n._kids) n._kids.forEach(k=>{ ep+=_treeEdge(n,k,false); });
+    if(n._moreFor) ep+=_treeEdge(n._moreFor,n,false);
+  });
+  (g.tlinks||[]).forEach(l=>{ const a=g.troots.find(r=>r.id===l.from), b=g.troots.find(r=>r.id===l.to);
+    if(a&&b) ep+=_treeEdge(a,b,true); });
+  $('#gEdges').innerHTML=ep;
+  let np='';
+  rows.forEach(n=>{
+    if(n._moreFor){
+      np+=`<g class="gnode more" data-more="${esc(n._moreFor.id)}" transform="translate(${n._x},${n._y})">
+        <rect width="${G_NW}" height="${G_NH}" rx="6"></rect><text class="glab" x="10" y="21">+ more callees</text></g>`;
+      return;
+    }
+    const cls='gnode '+(n.entry?'entry':'file')+(g.sel===n.id?' sel':'');
+    const lab=n.label.length>20?n.label.slice(0,19)+'…':n.label;
+    const tog=n.hasChildren?`<text class="gtog" x="${G_NW-18}" y="21">${n._exp?'▼':'▶'}</text>`:'';
+    const badge=(n.glossary&&n.glossary.length)?`<circle class="gterm" cx="${G_NW-32}" cy="9" r="4"><title>glossary: ${esc(n.glossary.join(', '))}</title></circle>`:'';
+    np+=`<g class="${cls}" data-id="${esc(n.id)}" transform="translate(${n._x},${n._y})">
+      <rect width="${G_NW}" height="${G_NH}" rx="6"></rect>
+      <text class="glab" x="10" y="21">${esc(lab)}</text>${badge}${tog}
+      <title>${esc(n.label)} · ${n.out||0} calls</title></g>`;
+  });
+  $('#gNodes').innerHTML=np;
+  $('#gNodes').querySelectorAll('.gnode').forEach(el=>{
+    if(el.classList.contains('more')){ el.onclick=ev=>{ev.stopPropagation(); const p=_findTNode(el.dataset.more); if(p)_gMore(p);}; return; }
+    const id=el.dataset.id, node=_findTNode(id);
+    el.onclick=ev=>{ ev.stopPropagation();
+      const tx=ev.target; // toggle if the ▶/▼ glyph clicked, else select
+      if(tx && tx.classList && tx.classList.contains('gtog')){ node._exp?_gCollapse(node):_gExpand(node); }
+      else _gSelect(id);
+    };
+    el.ondblclick=ev=>{ ev.stopPropagation(); const node=_findTNode(id); if(node&&node.hasChildren){ node._exp?_gCollapse(node):_gExpand(node);} };
+  });
+  _gApply();
+}
+function _descendants(n,acc){ acc=acc||[]; acc.push(n); if(n._kids) n._kids.forEach(k=>_descendants(k,acc)); return acc; }
+function _findTNode(id){ for(const r of window._g.troots){ const f=_descendants(r).find(x=>x.id===id); if(f) return f; } return null; }
+function _treeEdge(a,b,dashed){
+  const x1=a._x+G_NW, y1=a._y+G_NH/2, x2=b._x, y2=b._y+G_NH/2, mx=(x1+x2)/2;
+  return `<path class="gedge${dashed?' amb':''}" ${dashed?`data-from="${esc(a.id)}"`:''} d="M${x1} ${y1} C ${mx} ${y1} ${mx} ${y2} ${x2} ${y2}"></path>`;
+}
+
+
+// ======================= shared: detail panel, zoom/pan, fit =======================
+async function _gSelect(id){
+  const g=window._g; g.sel=id;
+  $('#gNodes').querySelectorAll('.gnode').forEach(n=>n.classList.toggle('sel',n.dataset.id===id));
+  const dp=$('#gDetail'); dp.hidden=false; dp.innerHTML='<div class="muted">loading…</div>';
+  let d; try{ d=await API.get('/graph/node?scope='+encodeURIComponent(state.scope)+'&id='+encodeURIComponent(id)); }
+  catch(e){ dp.innerHTML='<div class="muted">'+esc(e.message)+'</div>'; return; }
+  _gDetail(d);
+}
+function _gDetail(d){
+  const dp=$('#gDetail'); if(!dp) return;
+  let h=`<div class="row" style="justify-content:space-between;align-items:flex-start"><b style="word-break:break-all">${esc(d.label)}</b><span class="tag">${esc(d.type)}</span></div>`;
+  if(d.type==='file'){
+    h+=`<div class="muted" style="margin:4px 0">${esc(d.language||'')} · ${d.lines||0} lines</div>
+        <div style="margin:4px 0"><a href="#" id="gOpenSrc">open source →</a></div>`;
+    if(d.defs&&d.defs.length) h+=`<div class="gsec"><b class="muted">Definitions (${d.defs.length})</b><div class="gdefs">`+d.defs.slice(0,40).map(x=>`<a href="#" class="gdef" data-line="${x.line}"><code>${esc(x.name)}</code> <span class="muted">${esc(x.kind)}</span></a>`).join('')+`</div></div>`;
+    if(d.callees&&d.callees.length) h+=`<div class="gsec"><b class="muted">Calls (${d.callees.length})</b><div class="gnbrs">`+d.callees.slice(0,30).map(c=>`<a href="#" class="gnbr" data-id="${esc(c.id)}">${esc(c.label)}</a>`).join('')+`</div></div>`;
+    if(d.callers&&d.callers.length) h+=`<div class="gsec"><b class="muted">Called by (${d.callers.length})</b><div class="gnbrs">`+d.callers.slice(0,30).map(c=>`<a href="#" class="gnbr" data-id="${esc(c.id)}">${esc(c.label)}</a>`).join('')+`</div></div>`;
+  }
+  if(d.glossary&&d.glossary.length) h+=`<div class="gsec"><b class="muted">Glossary</b><div>${d.glossary.map(t=>`<a href="#" class="gchip" data-term="${esc(t)}">${esc(t)}</a>`).join(' ')}</div></div>`;
+  dp.innerHTML=h;
+  const os=$('#gOpenSrc'); if(os) os.onclick=e=>{e.preventDefault(); openSource(d.file,d.line||1);};
+  dp.querySelectorAll('.gdef').forEach(a=>a.onclick=e=>{e.preventDefault(); openSource(d.file,+a.dataset.line||1);});
+  dp.querySelectorAll('.gnbr').forEach(a=>a.onclick=e=>{e.preventDefault(); _gSelect(a.dataset.id);});
+  dp.querySelectorAll('.gchip').forEach(a=>a.onclick=e=>{e.preventDefault(); state.glossaryTermToSelect=a.dataset.term; state.tab='glossary'; renderProject();});
+}
+
+function _gFit(){
+  const g=window._g, c=$('#gCanvas'); if(!c) return;
+  const ns=$('#gNodes').querySelectorAll('g'); if(!ns.length){ _gApply(); return; }
+  let maxX=0,maxY=0;
+  ns.forEach(el=>{ const m=/translate\(([-\d.]+),([-\d.]+)\)/.exec(el.getAttribute('transform')||''); const r=el.querySelector('rect');
+    if(m){ const x=+m[1]+(r?+r.getAttribute('width'):G_NW), y=+m[2]+(r?+r.getAttribute('height'):G_NH); if(x>maxX)maxX=x; if(y>maxY)maxY=y; } });
+  const cw=c.clientWidth-24, ch=c.clientHeight-24;
+  g.scale=Math.max(0.12,Math.min(1.3, cw/(maxX+20), ch/(maxY+20))); g.tx=12; g.ty=12; _gApply();
+}
+function _gZoomBy(f){ const g=window._g,c=$('#gCanvas'); if(!c)return; const cx=c.clientWidth/2,cy=c.clientHeight/2,ns=Math.max(0.1,Math.min(4,g.scale*f));
+  g.tx=cx-(cx-g.tx)*(ns/g.scale); g.ty=cy-(cy-g.ty)*(ns/g.scale); g.scale=ns; _gApply(); }
+function _gWirePanZoom(){
+  const c=$('#gCanvas'); if(!c) return;
+  c.onwheel=e=>{ e.preventDefault(); const g=window._g,r=c.getBoundingClientRect(); const mx=e.clientX-r.left,my=e.clientY-r.top,f=e.deltaY<0?1.1:1/1.1,ns=Math.max(0.1,Math.min(4,g.scale*f));
+    g.tx=mx-(mx-g.tx)*(ns/g.scale); g.ty=my-(my-g.ty)*(ns/g.scale); g.scale=ns; _gApply(); };
+  c.onmousedown=e=>{ if(e.target.closest('.gnode')||e.target.closest('.gact'))return; const g=window._g; g._drag=true; g._sx=e.clientX; g._sy=e.clientY; c.classList.add('grabbing'); };
+  if(!window._gPanWired){ window._gPanWired=true;
+    window.addEventListener('mousemove',e=>{ const g=window._g; if(!g||!g._drag)return; g.tx+=e.clientX-g._sx; g.ty+=e.clientY-g._sy; g._sx=e.clientX; g._sy=e.clientY; _gApply(); });
+    window.addEventListener('mouseup',()=>{ const g=window._g,c=$('#gCanvas'); if(g)g._drag=false; if(c)c.classList.remove('grabbing'); });
+  }
+}
+
+//=================== LEARNING PAGE (right main: progress + step + machine load) ===================
+async function showLearning(){
+  state.view='learning';$('#content').innerHTML='<div id="learnRoot"></div>';
+  await renderLearning();
+}
+async function renderLearning(){
+  if(state.view!=='learning')return;
+  const root=$('#learnRoot');if(!root)return;
+  const [pl,pp]=[await API.get('/projects?state=learning'),await API.get('/projects?state=paused')];
+  const projs=[...pl.projects,...pp.projects];
+  const jobs=(window._jobs||[]);
+  let h='';
+  // (Machine load now lives in the always-on corner widget, not here.)
+  // ---- learning / in-progress projects ----
+  h+=`<div class="card"><h3>Learning / In-progress</h3>`;
+  if(!projs.length)h+='<div class="empty">No projects currently learning or paused.</div>';
+  // queued jobs (waiting for the single worker) shown explicitly per request
+  const jobTag=(s)=>{const m={running:'blue',queued:'amber',paused:'amber',interrupted:'red',failed:'red',done:'green'};
+    const txt=s==='queued'?'queued · waiting for worker':s;return `<span class="tag ${m[s]||''}">${esc(txt)}</span>`;};
+  projs.forEach((p,idx)=>{
+    const job=jobs.find(j=>j.project_id===p.id&&['running','queued','paused','interrupted'].includes(j.status))||jobs.find(j=>j.project_id===p.id);
+    const pr=job?.progress||{};const tot=pr.files_total||0,done=pr.files_done||0;const pct=tot?Math.round(done/tot*100):0;
+    const queuePos=job&&job.status==='queued'?jobs.filter(j=>j.status==='queued').findIndex(j=>j.job_id===job.job_id)+1:0;
+    h+=`<div class="card" style="background:var(--panel2)">
+      <div class="row" style="justify-content:space-between"><b>${esc(p.name)} ${stateTag(p.state)} ${job?jobTag(job.status):''}</b>
+        <div class="row">
+          ${job&&job.status==='running'?`<button class="small" onclick="jobPause('${job.job_id}')">Pause</button>`:''}
+          ${job&&['paused','interrupted','failed'].includes(job.status)?`<button class="small primary" onclick="jobResume('${job.job_id}')">Resume</button>`:''}
+          <button class="small danger" onclick="state.activeProject='${p.id}';terminateProject()">Terminate</button>
+        </div></div>
+      <div class="muted" style="margin:6px 0">${job?`${job.type} · <b>${job.status}</b>${job.status==='queued'?` (position ${queuePos} in queue — runs after the current job)`:` · ${esc(job.step||'')} · ${done}/${tot} files`}`:'no job'}</div>
+      <div class="bar" style="height:8px;background:#0d1117;border-radius:99px;overflow:hidden"><i style="display:block;height:100%;width:${pct}%;background:var(--accent)"></i></div>
+      ${job?`<div class="log" style="height:140px;margin-top:8px">${(job.log_tail||[]).map(esc).join('\n')}</div>`:''}
+    </div>`;});
+  h+='</div>';root.innerHTML=h;
+}
+async function jobPause(id){await API.post('/jobs/'+id+'/pause',{});pollJobs();}
+async function jobResume(id){await API.post('/jobs/'+id+'/resume',{});pollJobs();}
+
+//=================== MACHINE-LOAD CORNER WIDGET (CPU / RAM / VRAM) ===================
+// Built ONCE; each poll updates only text + bar widths IN PLACE (no innerHTML
+// rebuild of the meters), so values change smoothly with no flicker / remount.
+function _mlMeterHTML(id,name){
+  return `<div class="mlw-meter" id="${id}">
+    <div class="mlw-mtop"><span class="mlw-name">${name}</span><span class="mlw-val">—</span></div>
+    <div class="mlw-bar"><i></i></div>
+    <div class="mlw-sub"></div></div>`;
+}
+function mountMachineWidget(){
+  const w=$('#mlWidget'); if(!w || w.dataset.mounted) return;
+  w.dataset.mounted='1';
+  w.innerHTML=
+    `<button id="mlToggle" class="mlw-chip" title="Machine load — CPU / RAM / VRAM (click for details)">
+       <span class="mlw-dot" id="mlChipDot"></span>${SVG_CPU}<b id="mlChipText">—</b>
+     </button>
+     <div class="mlw-pop" id="mlPopover" hidden>
+       <div class="mlw-pophead">Machine load <span class="muted" id="mlPopServer"></span></div>
+       ${_mlMeterHTML('mlwCpu','CPU')}
+       ${_mlMeterHTML('mlwRam','RAM')}
+       ${_mlMeterHTML('mlwVram','VRAM')}
+     </div>`;
+  $('#mlToggle').onclick=(e)=>{e.stopPropagation();
+    const pop=$('#mlPopover'); if(pop) pop.hidden=!pop.hidden;};
+}
+// click outside the widget collapses the popover (taskbar-clock behavior)
+document.addEventListener('click',(e)=>{
+  const w=$('#mlWidget'), pop=$('#mlPopover');
+  if(w && pop && !pop.hidden && !w.contains(e.target)) pop.hidden=true;
+});
+function _mlBarColor(p){ return p>=90?'var(--red)':p>=70?'var(--amber)':'var(--accent)'; }
+// update ONE meter's value/bar/sub in place — never replaces the node
+function _setMeter(id,pct,valText,subText){
+  const m=document.getElementById(id); if(!m) return;
+  const known=(pct!=null && !isNaN(pct));
+  const p=known?Math.max(0,Math.min(100,pct)):0;
+  const bar=m.querySelector('.mlw-bar>i');
+  bar.style.width=p+'%';
+  bar.style.background=_mlBarColor(p);
+  m.querySelector('.mlw-val').textContent=valText;
+  m.querySelector('.mlw-sub').textContent=subText||'';
+}
+function updateMachineWidget(d){
+  if(!$('#mlWidget')) return;
+  const cpu=(d&&d.cpu)||{}, ram=(d&&d.ram)||{}, gpus=(d&&d.gpus)||[];
+  _setMeter('mlwCpu', cpu.percent,
+    cpu.percent!=null?cpu.percent+'%':'n/a',
+    cpu.cores?(cpu.cores+' cores'):(cpu.available?'':'psutil not installed'));
+  _setMeter('mlwRam', ram.percent,
+    ram.percent!=null?ram.percent+'%':'n/a',
+    ram.available?(ram.used_gb+' / '+ram.total_gb+' GiB used'):'psutil not installed');
+  // VRAM — honest about partial / missing GPU info; never fabricated
+  const g=gpus[0];
+  if(g && g.vram_percent!=null){
+    _setMeter('mlwVram', g.vram_percent, g.vram_percent+'%',
+      (g.name?g.name+' · ':'')+g.vram_used_gb+' / '+g.vram_total_gb+' GiB');
+  }else if(g && g.vram_used_gb!=null){
+    _setMeter('mlwVram', null, g.vram_used_gb+' GiB',
+      (g.name?g.name+' · ':'')+'used (total unavailable)');
+  }else if(d && d.gpu_probed===false){
+    _setMeter('mlwVram', null, '…', 'detecting GPU…');
+  }else{
+    _setMeter('mlwVram', null, 'n/a', g&&g.name?(g.name+' · usage unavailable'):'no GPU detected');
+  }
+  // collapsed chip: CPU headline + a severity dot over the worst of CPU/RAM/VRAM
+  const sev=[cpu.percent, ram.percent, g&&g.vram_percent].filter(x=>x!=null);
+  const worst=sev.length?Math.max(...sev):null;
+  const dot=$('#mlChipDot');
+  if(dot) dot.style.background = worst==null?'var(--muted)'
+    :(worst>=90?'var(--red)':worst>=70?'var(--amber)':'var(--green)');
+  const txt=$('#mlChipText'); if(txt) txt.textContent = cpu.percent!=null?(cpu.percent+'%'):'—';
+  const ps=$('#mlPopServer'); const s=window._serverStatus;
+  if(ps) ps.textContent = s?('model: '+s.status):'';
+}
+async function pollMachine(){
+  let d=null; try{ d=await API.get('/system/load'); }catch(e){}
+  updateMachineWidget(d);
+}
+function startMachineMonitor(){ mountMachineWidget(); pollMachine(); setInterval(pollMachine,2500); }
+
+//=================== MODEL TOOL (left panel: params + start/stop/save + status) ===================
+let modelCfg=null;
+async function renderModelTool(){
+  $('#leftBody').innerHTML='<div class="lphead">Model server</div><div class="lpscroll"><div class="muted">loading model settings…</div></div>';
+  modelCfg=await API.get('/model-config');
+  const f=(k,lbl,type='text')=>`<label>${lbl}</label><input id="m_${k}" value="${esc(modelCfg[k]??'')}" ${type==='num'?'type="number"':''}/>`;
+  $('#leftBody').innerHTML=`
+    <div class="lphead">Model server</div>
+    <div class="lpscroll">
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="small primary" onclick="srvStart()">▶ Start</button>
+        <button class="small" onclick="srvStop()">■ Stop</button>
+        <button class="small" onclick="srvRestart()">⟳ Restart</button>
+        <button class="small" onclick="saveModelCfg()">💾 Save</button>
+      </div>
+      <div id="srvStatusLine" class="muted" style="margin-bottom:8px">status: …</div>
+      <label>Model file (.gguf)</label>
+      <div class="row"><input id="m_model_path" value="${esc(modelCfg.model_path||'')}"/><button class="small" onclick="pickModel()">Browse</button></div>
+      ${f('llama_server_path','llama-server path')}
+      ${f('n_gpu_layers','n_gpu_layers (-ngl)','num')}
+      ${f('ctx_size','ctx_size (-c) — drop to 16384 on OOM','num')}
+      ${f('parallel','parallel (--parallel)','num')}
+      ${f('threads','threads (--threads)','num')}
+      ${f('host','host')}
+      ${f('port','port (default 7080)','num')}
+      ${f('cache_type_k','cache_type_k (-ctk)')}
+      ${f('cache_type_v','cache_type_v (-ctv)')}
+      <label class="row" style="margin-top:8px"><input type="checkbox" id="m_flash_attn" style="width:auto" ${modelCfg.flash_attn?'checked':''}/> flash_attn (-fa)</label>
+      <label class="row"><input type="checkbox" id="m_jinja" style="width:auto" ${modelCfg.jinja?'checked':''}/> jinja (--jinja)</label>
+      ${f('extra_args','extra_args (appended verbatim)')}
+      <label style="margin-top:10px">Server log (stdout/stderr — OOM &amp; load errors visible here)</label>
+      <div class="log" id="srvLog" style="height:170px"></div>
+      <div class="muted" id="oomHint" style="margin-top:6px"></div>
+    </div>`;
+  pollServerLog();
+}
+let _logTimer=null;
+function pollServerLog(){clearInterval(_logTimer);_logTimer=setInterval(async()=>{
+  if(state.tool!=='model'){clearInterval(_logTimer);return;}
+  const s=await API.get('/server/status');renderModelLog(s);},1500);
+  API.get('/server/status').then(renderModelLog);}
+function renderModelLog(s){
+  const line=$('#srvStatusLine');
+  if(line){
+    const load=((s.status==='loading'||s.status==='starting')&&s.elapsed)?` · loading ${s.elapsed}s`:'';
+    const err=s.error?(' · <span class="tag red">'+(s.exit_code!=null?'exit '+s.exit_code+' — ':'')+esc(s.error)+'</span>'):'';
+    line.innerHTML=`status: <b>${esc(s.status)}</b> ${s.attached?'(attached)':''}${load} · ${esc(s.base_url)}${err}`;
+  }
+  const log=$('#srvLog');if(log){log.textContent=(s.log_tail||[]).join('\n');log.scrollTop=log.scrollHeight;}
+  const hint=$('#oomHint');if(hint)hint.innerHTML=s.oom?'⚠️ Looks like an out-of-memory / load failure. Try lowering <b>ctx_size to 16384</b> and/or <b>n_gpu_layers</b>, then Restart.':'';
+}
+function gatherCfg(){return {
+  llama_server_path:$('#m_llama_server_path').value,model_path:$('#m_model_path').value,
+  n_gpu_layers:+$('#m_n_gpu_layers').value,ctx_size:+$('#m_ctx_size').value,parallel:+$('#m_parallel').value,
+  threads:+$('#m_threads').value,host:$('#m_host').value,port:+$('#m_port').value,
+  cache_type_k:$('#m_cache_type_k').value,cache_type_v:$('#m_cache_type_v').value,
+  flash_attn:$('#m_flash_attn').checked,jinja:$('#m_jinja').checked,extra_args:$('#m_extra_args').value};}
+async function _saveCfg(){modelCfg=await API.post('/model-config',gatherCfg());}
+async function saveModelCfg(){await _saveCfg();alert('Saved.');}
+// Start/Restart: persist settings, launch, then surface progress + machine load on
+// the Learning page (right main) while the model tool keeps streaming the log.
+async function srvStart(){await _saveCfg();await API.post('/server/start',{});showLearning();}
+async function srvRestart(){await _saveCfg();await API.post('/server/restart',{});showLearning();}
+async function srvStop(){await API.post('/server/stop',{});pollServerLog();}
+
+// model file picker
+async function pickModel(){
+  let cur=modelCfg._last_model_folder||modelCfg._default_models_folder||'';
+  showModal('Pick .gguf model','<div id="mpBody" class="tree" style="max-height:50vh"></div>',[]);
+  async function load(path){
+    const d=await API.get('/fs/list?path='+encodeURIComponent(path||''));
+    const b=$('#mpBody');b.innerHTML='';
+    b.appendChild(rowNav('📁 ..',()=>load(d.parent||'')));
+    if(d.is_root){(d.entries||[]).forEach(e=>b.appendChild(rowNav('💽 '+e.name,()=>load(e.path))));return;}
+    b.appendChild(el('div','muted','<small>'+esc(d.path)+'</small>'));
+    (d.entries||[]).forEach(e=>{
+      if(e.type==='dir')b.appendChild(rowNav('📁 '+e.name,()=>load(e.path)));
+      else b.appendChild(rowNav('📦 '+e.name+' ('+(e.size/1e9).toFixed(2)+' GB)',()=>{$('#m_model_path').value=e.path;modelCfg.model_path=e.path;closeModal();}));
+    });
+  }
+  load(cur);
+}
+function rowNav(label,fn){const r=el('div','tnode');const a=el('span','nm dir',esc(label));a.style.cursor='pointer';a.onclick=fn;r.appendChild(a);return r;}
+
+//=================== modal helpers ===================
+function showModal(title,bodyHtml,buttons){
+  $('#modalTitle').textContent=title;$('#modalBody').innerHTML=bodyHtml;
+  const f=$('#modalFoot');f.innerHTML='';
+  (buttons||[]).forEach(b=>{
+    const btn=el('button',b.cls||'',b.label);
+    // Wrap the action: disable all buttons + show a busy label while it runs, and
+    // surface any error in the modal instead of leaving it silently stuck open.
+    btn.onclick=async()=>{
+      const all=[...f.querySelectorAll('button')]; all.forEach(x=>x.disabled=true);
+      const orig=btn.textContent; btn.textContent=b.busy||'Working…';
+      try{ await b.fn(); }
+      catch(e){
+        all.forEach(x=>x.disabled=false); btn.textContent=orig;
+        let m=$('#modalErr'); if(!m){m=el('div','muted');m.id='modalErr';m.style.color='#e06c6c';m.style.marginTop='8px';$('#modalBody').appendChild(m);}
+        m.textContent='Action failed: '+((e&&e.message)?e.message:e);
+      }
+    };
+    f.appendChild(btn);
+  });
+  const cancel=el('button','','Close');cancel.onclick=closeModal;f.appendChild(cancel);
+  $('#modalBg').classList.add('show');
+}
+function showModalConfirm(title,html,fn,busy){showModal(title,html,[{label:'Confirm',cls:'danger',fn,busy:busy}]);}
+function closeModal(){$('#modalBg').classList.remove('show');}
+
+//=================== tiny markdown ===================
+function mdToHtml(md){
+  if(!md)return '';
+  const lines=md.split('\n');let html='',i=0;
+  const inline=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    // doc-page links only: sanitize the target to a safe page-id charset so a
+    // model answer / repo content can't break out of the inline handler (XSS).
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,(m,t,u)=>{const safe=String(u).replace(/[^a-zA-Z0-9_.\-/#]/g,'');return `<a href="#" onclick="openDoc('${safe}');return false;">${t}</a>`;});
+  while(i<lines.length){
+    let l=lines[i];
+    if(l.startsWith('```')){
+      const lang=l.slice(3).trim().toLowerCase(); const buf=[]; i++;
+      while(i<lines.length && !lines[i].startsWith('```')){ buf.push(lines[i]); i++; }
+      i++; // skip closing fence
+      html += (lang==='mermaid') ? renderErDiagram(buf.join('\n')) : '<pre>'+esc(buf.join('\n'))+'</pre>';
+      continue;
+    }
+    if(/^\|(.+)\|/.test(l)&&i+1<lines.length&&/^\|[\s:\-|]+\|/.test(lines[i+1])){
+      const hdr=l.split('|').slice(1,-1).map(c=>c.trim());i+=2;let rows=[];
+      while(i<lines.length&&/^\|(.+)\|/.test(lines[i])){rows.push(lines[i].split('|').slice(1,-1).map(c=>c.trim()));i++;}
+      html+='<table><tr>'+hdr.map(h=>'<th>'+inline(h)+'</th>').join('')+'</tr>'+
+        rows.map(r=>'<tr>'+r.map(c=>'<td>'+inline(c)+'</td>').join('')+'</tr>').join('')+'</table>';continue;}
+    let m;
+    if(m=l.match(/^(#{1,6})\s+(.*)/)){const n=m[1].length;html+=`<h${n}>${inline(m[2])}</h${n}>`;}
+    else if(l.match(/^>\s?/)){html+='<blockquote>'+inline(l.replace(/^>\s?/,''))+'</blockquote>';}
+    else if(l.match(/^[-*]\s+/)){let items=[];while(i<lines.length&&lines[i].match(/^[-*]\s+/)){items.push(lines[i].replace(/^[-*]\s+/,''));i++;}html+='<ul>'+items.map(x=>'<li>'+inline(x)+'</li>').join('')+'</ul>';continue;}
+    else if(l.trim()==='---'){html+='<hr/>';}
+    else if(l.trim()===''){html+='';}
+    else if(l.startsWith('<!--')){/*skip note markers*/}
+    else{html+='<p>'+inline(l)+'</p>';}
+    i++;
+  }
+  return '<div>'+html+'</div>';
+}
+
+//=================== local Mermaid erDiagram renderer (no external dep) ===================
+function renderErDiagram(code){
+  try{
+    const lines=code.split('\n').map(l=>l.trim()).filter(Boolean);
+    const entities=[]; const rels=[]; let cur=null;
+    const relRe=/^(\w+)\s+([|}o]{1,2}(?:--|\.\.)[|{o]{1,2})\s+(\w+)\s*:\s*"?([^"]*)"?/;
+    for(const l of lines){
+      if(l==='erDiagram') continue;
+      if(/^\w+\s*\{$/.test(l)){ cur={name:l.replace('{','').trim(),attrs:[]}; entities.push(cur); continue; }
+      if(l==='}'){ cur=null; continue; }
+      let m;
+      if(cur && (m=l.match(/^(\S+)\s+(\S+)(?:\s+(PK|FK|UK|PK,FK))?\s*(?:"([^"]*)")?/))){
+        cur.attrs.push({type:m[1],name:m[2],key:m[3]||'',note:m[4]||''}); continue;
+      }
+      if(!cur && (m=l.match(relRe))){
+        const card=({'||--||':'1 : 1','||--o{':'1 : N','}o--o{':'N : N','}o--||':'N : 1'})[m[2]]||m[2];
+        rels.push({a:m[1],b:m[3],card,label:m[4]||''});
+      }
+    }
+    if(!entities.length) return '<pre>'+esc(code)+'</pre>';
+    let h='<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;margin:8px 0">';
+    for(const e of entities){
+      h+=`<div class="card" style="margin:0;min-width:200px;background:var(--panel2)">
+        <div style="font-weight:700;border-bottom:1px solid var(--border);padding-bottom:4px;margin-bottom:4px">${esc(e.name)}</div>`;
+      h+='<table style="font-size:12px">'+e.attrs.map(a=>`<tr>
+        <td><code>${esc(a.name)}</code></td><td class="muted">${esc(a.type)}</td>
+        <td>${a.key?`<span class="tag ${a.key.includes('PK')?'green':'blue'}">${esc(a.key)}</span>`:''}</td></tr>`).join('')+'</table></div>';
+    }
+    h+='</div>';
+    if(rels.length){
+      h+='<div style="margin-top:6px"><b class="muted">Relationships</b><ul>'+
+        rels.map(r=>`<li><code>${esc(r.a)}</code> <b>${esc(r.card)}</b> <code>${esc(r.b)}</code>${r.label?` <span class="muted">(${esc(r.label)})</span>`:''}</li>`).join('')+'</ul></div>';
+    }
+    return h;
+  }catch(e){ return '<pre>'+esc(code)+'</pre>'; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,622 @@
+"""SQLite persistence: registry (projects), jobs, model-config,
+per-file index (incremental hashes + pause checkpoint), and a kv store.
+
+Thread-safe: a single connection (WAL mode) guarded by a lock, since the
+background job worker, SSE streams, and request handlers all touch the DB
+concurrently.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import time
+import uuid
+from typing import Any, Dict, List, Optional
+
+from . import config, machine
+
+_conn: Optional[sqlite3.Connection] = None
+_lock = threading.RLock()
+
+
+def now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+
+
+def new_id(prefix: str = "") -> str:
+    return f"{prefix}{uuid.uuid4().hex[:12]}"
+
+
+def _connect() -> sqlite3.Connection:
+    config.ensure_dirs()
+    conn = sqlite3.connect(str(config.DB_PATH), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def init_db() -> None:
+    global _conn
+    with _lock:
+        if _conn is None:
+            _conn = _connect()
+        c = _conn
+        c.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'init',
+                paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                meta_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                path TEXT,
+                status TEXT NOT NULL,
+                step TEXT DEFAULT '',
+                progress_json TEXT NOT NULL DEFAULT '{}',
+                log_tail_json TEXT NOT NULL DEFAULT '[]',
+                control_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS model_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                config_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS file_index (
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'indexed',
+                chunk_ids_json TEXT NOT NULL DEFAULT '[]',
+                service TEXT DEFAULT '',
+                topics_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, file_path)
+            );
+
+            CREATE TABLE IF NOT EXISTS kv (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+
+            -- Ask conversation history (UI memory): persistent, per-scope, bounded.
+            -- Distinct from solved cases (curated knowledge in the cases store).
+            CREATE TABLE IF NOT EXISTS ask_history (
+                exchange_id TEXT PRIMARY KEY,
+                scope_id TEXT NOT NULL,
+                project_id TEXT,
+                job_id TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ask_scope ON ask_history(scope_id);
+            """
+        )
+        c.commit()
+        _migrate_paths_to_sidecar(c)
+
+
+def _migrate_paths_to_sidecar(c: sqlite3.Connection) -> None:
+    """One-time, idempotent: move any legacy in-DB project paths (the absolute
+    ingest root used to live in ``projects.paths_json``) into the machine-local
+    sidecar, then blank the column. Keeps the portable DB free of the absolute
+    machine path. After the first run paths_json is '[]' so this is a no-op."""
+    rows = c.execute("SELECT id, paths_json FROM projects").fetchall()
+    for r in rows:
+        try:
+            legacy = json.loads(r["paths_json"] or "[]")
+        except Exception:
+            legacy = []
+        if not legacy:
+            continue
+        if not machine.get_paths(r["id"]):
+            machine.set_paths(r["id"], legacy)
+        c.execute("UPDATE projects SET paths_json='[]' WHERE id=?", (r["id"],))
+    c.commit()
+
+
+def _c() -> sqlite3.Connection:
+    if _conn is None:
+        init_db()
+    assert _conn is not None
+    return _conn
+
+
+# ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+def _project_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "state": row["state"],
+        # paths are machine-local (sidecar), never the portable DB column
+        "paths": machine.get_paths(row["id"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "meta": json.loads(row["meta_json"]),
+    }
+
+
+def create_project(name: str, project_id: Optional[str] = None) -> Dict[str, Any]:
+    pid = project_id or new_id("p_")
+    ts = now()
+    with _lock:
+        _c().execute(
+            "INSERT INTO projects (id,name,state,paths_json,created_at,updated_at,meta_json)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (pid, name, "init", "[]", ts, ts, "{}"),
+        )
+        _c().commit()
+    config.ensure_project_dirs(pid)
+    return get_project(pid)  # type: ignore[return-value]
+
+
+def get_project(project_id: str) -> Optional[Dict[str, Any]]:
+    with _lock:
+        row = _c().execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    # a project being deleted is treated as GONE at once (its storage is reclaimed in
+    # the background); the row is dropped for real when cleanup finishes.
+    if not row or row["state"] == "deleting":
+        return None
+    return _project_row(row)
+
+
+def list_projects(state: Optional[str] = None) -> List[Dict[str, Any]]:
+    with _lock:
+        if state:
+            rows = _c().execute(
+                "SELECT * FROM projects WHERE state=? ORDER BY created_at", (state,)
+            ).fetchall()
+        else:
+            # hide projects being deleted, so a UI refresh never shows them again
+            # while the background cleanup runs.
+            rows = _c().execute(
+                "SELECT * FROM projects WHERE state!='deleting' ORDER BY created_at"
+            ).fetchall()
+    return [_project_row(r) for r in rows]
+
+
+def delete_project(project_id: str) -> None:
+    """Remove the project entity + its jobs + file index rows + Ask history.
+    (Callers also drop the vector collections and the data dir — see
+    jobs.delete_project.)"""
+    with _lock:
+        _c().execute("DELETE FROM projects WHERE id=?", (project_id,))
+        _c().execute("DELETE FROM jobs WHERE project_id=?", (project_id,))
+        _c().execute("DELETE FROM file_index WHERE project_id=?", (project_id,))
+        _c().execute(
+            "DELETE FROM ask_history WHERE project_id=? OR scope_id=?",
+            (project_id, project_id),
+        )
+        _c().commit()
+    machine.forget(project_id)   # drop the machine-local source-root config too
+
+
+def set_project_state(project_id: str, state: str) -> None:
+    with _lock:
+        # 'deleting' is a ONE-WAY tombstone. The background job worker writes a
+        # project's state as it unwinds (e.g. -> 'paused'/'ready'/'init' when a job
+        # is terminated as part of an async delete); without this guard such a write
+        # would revive a deleting project and it would reappear in the listing.
+        row = _c().execute("SELECT state FROM projects WHERE id=?", (project_id,)).fetchone()
+        if row and row["state"] == "deleting" and state != "deleting":
+            return
+        _c().execute(
+            "UPDATE projects SET state=?, updated_at=? WHERE id=?",
+            (state, now(), project_id),
+        )
+        _c().commit()
+
+
+def update_project_meta(project_id: str, meta: Dict[str, Any]) -> None:
+    with _lock:
+        _c().execute(
+            "UPDATE projects SET meta_json=?, updated_at=? WHERE id=?",
+            (json.dumps(meta), now(), project_id),
+        )
+        _c().commit()
+
+
+def get_project_paths(project_id: str) -> List[Dict[str, Any]]:
+    """The project's source-path specs — stored machine-locally (sidecar), so
+    they never travel with a copied ``data/`` folder."""
+    return machine.get_paths(project_id)
+
+
+def set_project_paths(project_id: str, paths: List[Dict[str, Any]]) -> None:
+    machine.set_paths(project_id, paths)
+    # bump the portable record's freshness without persisting the path itself
+    with _lock:
+        _c().execute(
+            "UPDATE projects SET updated_at=? WHERE id=?", (now(), project_id)
+        )
+        _c().commit()
+
+
+def upsert_project_path(project_id: str, path: str, exclude: List[str]) -> None:
+    """Add or update a path entry with its exclude-set (selection)."""
+    paths = get_project_paths(project_id)
+    norm = path.replace("\\", "/").rstrip("/")
+    found = False
+    for entry in paths:
+        if entry["path"].replace("\\", "/").rstrip("/") == norm:
+            entry["exclude"] = sorted(set(exclude))
+            entry["updated_at"] = now()
+            found = True
+            break
+    if not found:
+        paths.append({
+            "path": path,
+            "exclude": sorted(set(exclude)),
+            "added_at": now(),
+            "updated_at": now(),
+        })
+    set_project_paths(project_id, paths)
+
+
+def remove_project_path(project_id: str, path: str) -> None:
+    norm = path.replace("\\", "/").rstrip("/")
+    paths = [p for p in get_project_paths(project_id)
+             if p["path"].replace("\\", "/").rstrip("/") != norm]
+    set_project_paths(project_id, paths)
+
+
+
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+def _job_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "job_id": row["job_id"],
+        "project_id": row["project_id"],
+        "type": row["type"],
+        "path": row["path"],
+        "status": row["status"],
+        "step": row["step"],
+        "progress": json.loads(row["progress_json"]),
+        "log_tail": json.loads(row["log_tail_json"]),
+        "control": json.loads(row["control_json"]),
+        "error": row["error"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+    }
+
+
+def create_job(project_id: str, jtype: str, path: Optional[str]) -> Dict[str, Any]:
+    jid = new_id("job_")
+    ts = now()
+    with _lock:
+        _c().execute(
+            "INSERT INTO jobs (job_id,project_id,type,path,status,step,progress_json,"
+            "log_tail_json,control_json,error,created_at,updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (jid, project_id, jtype, path, "queued", "", "{}", "[]", "{}", "", ts, ts),
+        )
+        _c().commit()
+    return get_job(jid)  # type: ignore[return-value]
+
+
+def get_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with _lock:
+        row = _c().execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+    return _job_row(row) if row else None
+
+
+def list_jobs(project_ids: Optional[List[str]] = None,
+              status: Optional[str] = None) -> List[Dict[str, Any]]:
+    q = "SELECT * FROM jobs"
+    clauses, args = [], []
+    if project_ids:
+        clauses.append("project_id IN (%s)" % ",".join("?" * len(project_ids)))
+        args.extend(project_ids)
+    if status:
+        clauses.append("status=?")
+        args.append(status)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    q += " ORDER BY created_at DESC"
+    with _lock:
+        rows = _c().execute(q, args).fetchall()
+    return [_job_row(r) for r in rows]
+
+
+def update_job(job_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+    """Update arbitrary job fields. dict/list fields are json-encoded.
+    Always bumps updated_at (persist every tick — Invariant 6)."""
+    if not fields:
+        return get_job(job_id)
+    mapping = {
+        "progress": "progress_json",
+        "log_tail": "log_tail_json",
+        "control": "control_json",
+    }
+    sets, args = [], []
+    for k, v in fields.items():
+        col = mapping.get(k, k)
+        if col.endswith("_json") or isinstance(v, (dict, list)):
+            v = json.dumps(v)
+        sets.append(f"{col}=?")
+        args.append(v)
+    sets.append("updated_at=?")
+    args.append(now())
+    args.append(job_id)
+    with _lock:
+        _c().execute(f"UPDATE jobs SET {', '.join(sets)} WHERE job_id=?", args)
+        _c().commit()
+    return get_job(job_id)
+
+
+def active_jobs() -> List[Dict[str, Any]]:
+    with _lock:
+        rows = _c().execute(
+            "SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY created_at"
+        ).fetchall()
+    return [_job_row(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Model config (singleton)
+# ---------------------------------------------------------------------------
+def get_model_config() -> Dict[str, Any]:
+    with _lock:
+        row = _c().execute("SELECT config_json FROM model_config WHERE id=1").fetchone()
+    if not row:
+        cfg = dict(config.DEFAULT_MODEL_CONFIG)
+        set_model_config(cfg)
+        return cfg
+    cfg = dict(config.DEFAULT_MODEL_CONFIG)
+    cfg.update(json.loads(row["config_json"]))
+    return cfg
+
+
+def set_model_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(config.DEFAULT_MODEL_CONFIG)
+    merged.update(cfg)
+    # Local-only guarantee (Invariant 1): never persist a non-loopback host. A 0.0.0.0
+    # or LAN host would expose the model API (and every prompt's project content).
+    merged["host"] = config.coerce_loopback(str(merged.get("host", "127.0.0.1")))
+    with _lock:
+        _c().execute(
+            "INSERT INTO model_config (id,config_json,updated_at) VALUES (1,?,?)"
+            " ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json,"
+            " updated_at=excluded.updated_at",
+            (json.dumps(merged), now()),
+        )
+        _c().commit()
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# File index (per-file content hash = incremental + checkpoint store)
+# ---------------------------------------------------------------------------
+def get_file_index(project_id: str) -> Dict[str, Dict[str, Any]]:
+    with _lock:
+        rows = _c().execute(
+            "SELECT * FROM file_index WHERE project_id=?", (project_id,)
+        ).fetchall()
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        out[r["file_path"]] = {
+            "file_path": r["file_path"],
+            "file_hash": r["file_hash"],
+            "status": r["status"],
+            "chunk_ids": json.loads(r["chunk_ids_json"]),
+            "service": r["service"],
+            "topics": json.loads(r["topics_json"]),
+            "updated_at": r["updated_at"],
+        }
+    return out
+
+
+def upsert_file_index(project_id: str, file_path: str, file_hash: str,
+                      chunk_ids: List[str], service: str = "",
+                      topics: Optional[List[str]] = None,
+                      status: str = "indexed") -> None:
+    with _lock:
+        _c().execute(
+            "INSERT INTO file_index (project_id,file_path,file_hash,status,"
+            "chunk_ids_json,service,topics_json,updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(project_id,file_path) DO UPDATE SET"
+            " file_hash=excluded.file_hash, status=excluded.status,"
+            " chunk_ids_json=excluded.chunk_ids_json, service=excluded.service,"
+            " topics_json=excluded.topics_json, updated_at=excluded.updated_at",
+            (project_id, file_path, file_hash, status, json.dumps(chunk_ids),
+             service, json.dumps(topics or []), now()),
+        )
+        _c().commit()
+
+
+def delete_file_index_entry(project_id: str, file_path: str) -> None:
+    with _lock:
+        _c().execute(
+            "DELETE FROM file_index WHERE project_id=? AND file_path=?",
+            (project_id, file_path),
+        )
+        _c().commit()
+
+
+def clear_file_index(project_id: str) -> None:
+    with _lock:
+        _c().execute("DELETE FROM file_index WHERE project_id=?", (project_id,))
+        _c().commit()
+
+
+# ---------------------------------------------------------------------------
+# Ask conversation history (per-scope UI memory; bounded; survives restart)
+# ---------------------------------------------------------------------------
+ASK_HISTORY_CAP = 10            # retain at least the last N exchanges per scope
+
+
+def _ask_row(row: sqlite3.Row) -> Dict[str, Any]:
+    try:
+        payload = json.loads(row["payload_json"] or "{}")
+    except Exception:
+        payload = {}
+    base = {
+        "id": row["exchange_id"],
+        "scope_id": row["scope_id"],
+        "project_id": row["project_id"],
+        "job_id": row["job_id"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+    # payload carries question/answer/meta/etc.; reserved keys never overwritten
+    for k, v in payload.items():
+        if k not in base:
+            base[k] = v
+    return base
+
+
+def ask_create(exchange_id: str, scope_id: str, project_id: Optional[str],
+               payload: Dict[str, Any], status: str = "queued") -> Dict[str, Any]:
+    ts = now()
+    with _lock:
+        _c().execute(
+            "INSERT INTO ask_history (exchange_id,scope_id,project_id,job_id,status,"
+            "payload_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (exchange_id, scope_id, project_id, None, status, json.dumps(payload), ts, ts),
+        )
+        _c().commit()
+        _ask_trim(scope_id)
+    return ask_get(exchange_id)  # type: ignore[return-value]
+
+
+def ask_get(exchange_id: str) -> Optional[Dict[str, Any]]:
+    with _lock:
+        row = _c().execute(
+            "SELECT * FROM ask_history WHERE exchange_id=?", (exchange_id,)
+        ).fetchone()
+    return _ask_row(row) if row else None
+
+
+def ask_list(scope_id: str, limit: int = ASK_HISTORY_CAP) -> List[Dict[str, Any]]:
+    """Return the most recent *limit* exchanges for a scope, oldest-first."""
+    with _lock:
+        rows = _c().execute(
+            "SELECT * FROM ask_history WHERE scope_id=? ORDER BY rowid DESC LIMIT ?",
+            (scope_id, limit),
+        ).fetchall()
+    return [_ask_row(r) for r in reversed(rows)]
+
+
+def ask_update(exchange_id: str, *, status: Optional[str] = None,
+               job_id: Optional[str] = None,
+               payload: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Patch an exchange. *payload* keys are MERGED into the stored payload.
+
+    The read-merge-write is done inside ONE lock so two concurrent updaters (the
+    worker finalizing an answer + a request thread stamping saved_case_id) can't
+    clobber each other's payload keys (lost-update race)."""
+    with _lock:
+        row = _c().execute(
+            "SELECT payload_json FROM ask_history WHERE exchange_id=?", (exchange_id,)
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            merged = json.loads(row["payload_json"] or "{}")
+        except Exception:
+            merged = {}
+        if payload:
+            merged.update(payload)
+        sets, args = [], []
+        if status is not None:
+            sets.append("status=?")
+            args.append(status)
+        if job_id is not None:
+            sets.append("job_id=?")
+            args.append(job_id)
+        sets.append("payload_json=?")
+        args.append(json.dumps(merged))
+        sets.append("updated_at=?")
+        args.append(now())
+        args.append(exchange_id)
+        _c().execute(f"UPDATE ask_history SET {', '.join(sets)} WHERE exchange_id=?", args)
+        _c().commit()
+    return ask_get(exchange_id)
+
+
+def ask_claim_case(exchange_id: str, case_id: str) -> Optional[Dict[str, Any]]:
+    """Atomically set saved_case_id IFF not already set (idempotent save guard).
+    Returns {case_id, claimed}: claimed=True if THIS caller won the claim, False
+    if a case was already saved (returns the existing id). None if no exchange."""
+    with _lock:
+        row = _c().execute(
+            "SELECT payload_json FROM ask_history WHERE exchange_id=?", (exchange_id,)
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except Exception:
+            payload = {}
+        existing = payload.get("saved_case_id")
+        if existing:
+            return {"case_id": existing, "claimed": False}
+        payload["saved_case_id"] = case_id
+        _c().execute(
+            "UPDATE ask_history SET payload_json=?, updated_at=? WHERE exchange_id=?",
+            (json.dumps(payload), now(), exchange_id),
+        )
+        _c().commit()
+    return {"case_id": case_id, "claimed": True}
+
+
+def ask_clear(scope_id: str) -> None:
+    with _lock:
+        _c().execute("DELETE FROM ask_history WHERE scope_id=?", (scope_id,))
+        _c().commit()
+
+
+def _ask_trim(scope_id: str, keep: int = ASK_HISTORY_CAP) -> None:
+    """Drop exchanges beyond the newest *keep* for a scope (called under _lock)."""
+    _c().execute(
+        "DELETE FROM ask_history WHERE scope_id=? AND exchange_id NOT IN "
+        "(SELECT exchange_id FROM ask_history WHERE scope_id=? ORDER BY rowid DESC LIMIT ?)",
+        (scope_id, scope_id, keep),
+    )
+    _c().commit()
+
+
+# ---------------------------------------------------------------------------
+# kv
+# ---------------------------------------------------------------------------
+def kv_get(key: str, default: Optional[str] = None) -> Optional[str]:
+    with _lock:
+        row = _c().execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def kv_set(key: str, value: str) -> None:
+    with _lock:
+        _c().execute(
+            "INSERT INTO kv (key,value) VALUES (?,?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        _c().commit()
