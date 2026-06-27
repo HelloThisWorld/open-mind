@@ -25,7 +25,7 @@ honest "not found," never a guess. The same code runs on a single-module library
 
 - [Why this exists](#why-this-exists)
 - [Features](#features)
-- [Screenshots](#screenshots)
+- [In action](#in-action)
 - [Project structure](#project-structure)
 - [How it works](#how-it-works)
 - [Seeing it on real projects](#seeing-it-on-real-projects)
@@ -87,22 +87,59 @@ blocked. The result is a reliable, navigable map of a project's real structure a
 
 ---
 
-## Screenshots
+## In action
+
+Every example below is **real output from the indexed Apache Kafka source** — nothing is
+mocked, and every fact carries the `file:line` it came from.
 
 ### Deterministic glossary, with provenance and a usage profile
-![Glossary entry with provenance and usage profile](docs/screenshots/glossary.png)
-*A glossary entry on Apache Kafka: the verbatim in-project definition, its source location with
-a working jump-to-source link, and a usage profile derived entirely from the structure map.*
+
+```text
+ISR  —  "In-Sync Replicas"                                   (acronym · verbatim, not generated)
+
+  defined at    server/src/main/java/org/apache/kafka/server/partition/PartitionState.java:24
+  content hash  29122a12…                                    (pins the exact source text)
+  used in       core/src/main/scala/kafka/cluster/Partition.scala
+  modules       core/…/cluster  ·  server/…/partition
+```
+
+The definition is the exact text from the source; the usage profile is computed from the
+structure map. An unknown term returns an honest *"no authoritative definition found,"* never a
+guess.
 
 ### Source-traceable code graphs
-![Code graph with a node-detail panel](docs/screenshots/graphs.png)
-*The call / usage mind-map for a project, with a node opening its real source location, its
-neighbors, and cross-linked glossary terms.*
+
+A slice of Kafka's **real** module-dependency graph (edge weights = number of recovered
+references). It surfaces a genuine fact about the codebase: the wire-protocol module
+`common/requests` is the central hub almost everything depends on. Every node and edge comes
+from static analysis — none invented. GitHub renders it natively:
+
+```mermaid
+flowchart LR
+    admin["clients · admin/internals"]        -->|1878| req["clients · common/requests"]
+    ctrl["metadata · controller"]             -->|1800| req
+    persist["server-common · share/persister"] -->|1241| req
+    group["group-coordinator · group"]        -->|862| req
+    consumer["clients · consumer/internals"]  -->|745| req
+    style req fill:#e8590c,stroke:#a63a00,color:#fff
+```
+
+*(Node labels are shortened from the full module paths; in the app, clicking a node opens its
+real source location, its callers/callees, and cross-linked glossary terms.)*
 
 ### Token-precise code search
-![Token-precise code search](docs/screenshots/search.png)
-*Searching the indexed code: exact-token precision for identifiers, hybrid retrieval for prose —
-each result a real snippet with its `file:line`.*
+
+A bare identifier resolves to its real definition and usage sites — token-boundary precise,
+never the substring of another symbol:
+
+```text
+search "ApiKeys"          →  clients/…/common/protocol/ApiKeys.java:47          enum ApiKeys
+search "ProducerConfig"   →  clients/…/clients/producer/ProducerConfig.java:54  class ProducerConfig
+search "RecordBatch"      →  clients/…/common/record/internal/RecordBatch.java:34  interface RecordBatch
+```
+
+> Prefer a live UI walkthrough? See [`docs/screenshots/`](docs/screenshots/) for how to capture
+> Glossary, Graphs, and Search screenshots from the running app.
 
 ---
 
