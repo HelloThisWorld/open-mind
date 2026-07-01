@@ -342,9 +342,13 @@ The tracked repository documents core capabilities as `SKILL.md` contracts:
 | [`capability-router`](skills/capability-router/SKILL.md) | Agent-style routing with deterministic fallback. | Implemented |
 
 These are Claude Skills-style capability specifications: small, explicit,
-auditable units with deterministic contracts. Packaging them as installable
-Claude Skills is listed in the roadmap; the current repo already exposes the
-core tool surface through REST and MCP.
+auditable units with deterministic contracts. Every skill here is built with the
+[Agent Skill Verification Template](https://github.com/HelloThisWorld/agent-skill-verification-template)
+— a companion project that treats agent skills as production components, pairing a
+model-independent `SKILL.md` contract with an offline eval harness, source-grounding
+validators, replayable run artifacts, and a CI quality gate. Packaging them as
+installable Claude Skills is listed in the roadmap; the current repo already exposes
+the core tool surface through REST and MCP.
 
 ---
 
