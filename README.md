@@ -9,13 +9,14 @@ that coding agents can query without relying on guesses for indexed facts: a
 verbatim glossary, structure and call graphs, exact-token search, grounded Q&A
 context, saved solved cases, and an MCP tool surface.
 
+</div>
+
 [![Python](https://img.shields.io/badge/python-3.12+-3776ab.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Agent ready](https://img.shields.io/badge/AI%20Agents-MCP%20tools-8a2be2.svg)](#use-it-from-an-agent-mcp)
 [![Verification first](https://img.shields.io/badge/verification-file%3Aline%20evidence-e8590c.svg)](#verification-first-design)
 [![Local first](https://img.shields.io/badge/local--first-audited%20egress-555.svg)](#local-first-boundary)
-
-</div>
+[![Built with skill template](https://img.shields.io/badge/built%20with-skill%20template-8250df.svg)](https://github.com/HelloThisWorld/agent-skill-verification-template)
 
 Open Mind is built around one practical agent-engineering problem:
 
