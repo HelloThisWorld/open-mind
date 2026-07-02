@@ -30,30 +30,6 @@ builds durable artifacts from the code itself. The model, editor, or agent then
 queries those artifacts. If the repository does not support a claim, Open Mind
 prefers a precise "not found" over a plausible hallucination.
 
-## Table Of Contents
-
-- [Why Open Mind](#why-open-mind)
-- [Actual Project Demo](#actual-project-demo)
-- [What It Builds](#what-it-builds)
-- [Built For AI Agent Workflows](#built-for-ai-agent-workflows)
-- [Verification-First Design](#verification-first-design)
-- [In Action](#in-action)
-- [How This Differs From Generic RAG](#how-this-differs-from-generic-rag)
-- [Quick Start](#quick-start)
-- [Use It From An Agent (MCP)](#use-it-from-an-agent-mcp)
-- [Capabilities As Skills](#capabilities-as-skills)
-- [Measured Skill Verification](#measured-skill-verification)
-- [Implementation Map](#implementation-map)
-- [Local-First Boundary](#local-first-boundary)
-- [Configuration](#configuration)
-- [Testing](#testing)
-- [Roadmap](#roadmap)
-- [Design Principles](#design-principles)
-- [Contributing](#contributing)
-- [License](#license)
-
----
-
 ## Actual Project Demo
 
 Screenshots below are captured from the running Open Mind UI against an indexed
