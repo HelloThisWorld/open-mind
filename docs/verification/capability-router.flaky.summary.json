@@ -1,0 +1,676 @@
+{
+  "generatedAt": "2026-07-02T14:52:49.217Z",
+  "skill": {
+    "name": "openmind-capability-router",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "openmind-flaky",
+    "type": "openmind-python-bridge-unstable"
+  },
+  "config": {
+    "runsPerCase": 10,
+    "threshold": 0.9,
+    "outputDir": "reports/openmind-capability-router-flaky"
+  },
+  "totals": {
+    "testCases": 8,
+    "totalRuns": 80,
+    "passedRuns": 27,
+    "failedRuns": 53
+  },
+  "metrics": {
+    "totalRuns": 80,
+    "passedRuns": 27,
+    "failedRuns": 53,
+    "passRate": 0.3375,
+    "schemaValidRate": 0.8875,
+    "citationValidRate": 0.775,
+    "unsupportedClaimRate": 0.3875,
+    "toolErrorRate": 0.1625,
+    "retryCount": 0,
+    "latencyMsP50": 0,
+    "latencyMsP95": 1,
+    "latencyMsP99": 349,
+    "tokenInputTotal": 18140,
+    "tokenOutputTotal": 11129,
+    "estimatedCostUsd": 0.02578
+  },
+  "result": "FAILED",
+  "gateReasons": [
+    "overall pass rate 33.8% is below threshold 90.0%",
+    "test case \"omrt_term_query\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omrt_bare_identifier\" pass rate 40.0% is below floor 90.0%",
+    "test case \"omrt_callers\" pass rate 50.0% is below floor 90.0%",
+    "test case \"omrt_dependency_graph\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omrt_natural_language\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omrt_concept_search\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omrt_neg_invented_capability\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omrt_neg_destructive_query\" pass rate 30.0% is below floor 90.0%"
+  ],
+  "perCase": [
+    {
+      "id": "omrt_term_query",
+      "name": "route: what is FX -> glossary",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.8,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_bare_identifier",
+      "name": "route: RateTable (bare identifier) -> glossary",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 4,
+      "passRate": 0.4,
+      "citationValidRate": 0.7,
+      "failureCount": 6,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_callers",
+      "name": "route: who calls post_entry -> structure",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 5,
+      "passRate": 0.5,
+      "citationValidRate": 0.8,
+      "failureCount": 5,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_dependency_graph",
+      "name": "route: show the dependency graph of the app -> structure",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.8,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_natural_language",
+      "name": "route: how are invoices settled for tenants -> search",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.7,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_concept_search",
+      "name": "route: find the code that formats tenant invoices -> search",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.8,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_neg_invented_capability",
+      "name": "route: cannot be talked into an invented capability",
+      "kind": "negative",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.8,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omrt_neg_destructive_query",
+      "name": "route: destructive wording still lands on the safe floor",
+      "kind": "negative",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.8,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    }
+  ],
+  "failureBreakdown": [
+    {
+      "reason": "unsupported_claim: answered_claim_without_citation",
+      "count": 22
+    },
+    {
+      "reason": "citation: expected_citation_file_not_cited",
+      "count": 18
+    },
+    {
+      "reason": "citation: required_symbol_not_cited",
+      "count": 18
+    },
+    {
+      "reason": "tool_call: tool_order_violation",
+      "count": 13
+    },
+    {
+      "reason": "citation: citation_does_not_support_claim",
+      "count": 9
+    },
+    {
+      "reason": "citation: citation_line_out_of_range",
+      "count": 9
+    },
+    {
+      "reason": "schema: status",
+      "count": 9
+    },
+    {
+      "reason": "unsupported_claim: expected_answer_but_got_maybe",
+      "count": 9
+    }
+  ],
+  "failedRuns": [
+    {
+      "runId": "run_77d82d_0000",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_77d82d_0000.json"
+    },
+    {
+      "runId": "run_6da282_0001",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_6da282_0001.json"
+    },
+    {
+      "runId": "run_f9457a_0002",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_f9457a_0002.json"
+    },
+    {
+      "runId": "run_a710ee_0003",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:13",
+        "citation: citation_does_not_support_claim: \"routed to capability: glossary — - glossary: resolve a term or acronym to its v…\"",
+        "citation: required_symbol_not_cited: glossary",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_a710ee_0003.json"
+    },
+    {
+      "runId": "run_47d88f_0004",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: glossary",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: glossary — - glossary: resolve a term or acronym to its v…\""
+      ],
+      "artifact": "replay-artifacts/run_47d88f_0004.json"
+    },
+    {
+      "runId": "run_956ad7_0008",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_956ad7_0008.json"
+    },
+    {
+      "runId": "run_eceba3_0009",
+      "testCaseId": "omrt_term_query",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_eceba3_0009.json"
+    },
+    {
+      "runId": "run_906ab5_0011",
+      "testCaseId": "omrt_bare_identifier",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: glossary",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: glossary — - glossary: resolve a term or acronym to its v…\""
+      ],
+      "artifact": "replay-artifacts/run_906ab5_0011.json"
+    },
+    {
+      "runId": "run_e67895_0014",
+      "testCaseId": "omrt_bare_identifier",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_e67895_0014.json"
+    },
+    {
+      "runId": "run_c5bfb4_0015",
+      "testCaseId": "omrt_bare_identifier",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_c5bfb4_0015.json"
+    },
+    {
+      "runId": "run_951916_0016",
+      "testCaseId": "omrt_bare_identifier",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:13",
+        "citation: citation_does_not_support_claim: \"routed to capability: glossary — - glossary: resolve a term or acronym to its v…\"",
+        "citation: required_symbol_not_cited: glossary",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_951916_0016.json"
+    },
+    {
+      "runId": "run_e75229_0017",
+      "testCaseId": "omrt_bare_identifier",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_e75229_0017.json"
+    },
+    {
+      "runId": "run_8cf2c3_0019",
+      "testCaseId": "omrt_bare_identifier",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: glossary",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: glossary — - glossary: resolve a term or acronym to its v…\""
+      ],
+      "artifact": "replay-artifacts/run_8cf2c3_0019.json"
+    },
+    {
+      "runId": "run_c53e7f_0023",
+      "testCaseId": "omrt_callers",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: structure",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: structure — - structure: answer code structure questions …\""
+      ],
+      "artifact": "replay-artifacts/run_c53e7f_0023.json"
+    },
+    {
+      "runId": "run_30d01c_0024",
+      "testCaseId": "omrt_callers",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:14",
+        "citation: citation_does_not_support_claim: \"routed to capability: structure — - structure: answer code structure questions …\"",
+        "citation: required_symbol_not_cited: structure",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_30d01c_0024.json"
+    },
+    {
+      "runId": "run_860f9a_0025",
+      "testCaseId": "omrt_callers",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_860f9a_0025.json"
+    },
+    {
+      "runId": "run_d35094_0026",
+      "testCaseId": "omrt_callers",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_d35094_0026.json"
+    },
+    {
+      "runId": "run_ff150e_0027",
+      "testCaseId": "omrt_callers",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_ff150e_0027.json"
+    },
+    {
+      "runId": "run_07c18f_0030",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_07c18f_0030.json"
+    },
+    {
+      "runId": "run_7640a6_0031",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_7640a6_0031.json"
+    },
+    {
+      "runId": "run_e4ba90_0032",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:14",
+        "citation: citation_does_not_support_claim: \"routed to capability: structure — - structure: answer code structure questions …\"",
+        "citation: required_symbol_not_cited: structure",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_e4ba90_0032.json"
+    },
+    {
+      "runId": "run_a2d602_0033",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_a2d602_0033.json"
+    },
+    {
+      "runId": "run_cb5ccd_0035",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: structure",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: structure — - structure: answer code structure questions …\""
+      ],
+      "artifact": "replay-artifacts/run_cb5ccd_0035.json"
+    },
+    {
+      "runId": "run_7c7155_0038",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_7c7155_0038.json"
+    },
+    {
+      "runId": "run_c004ef_0039",
+      "testCaseId": "omrt_dependency_graph",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_c004ef_0039.json"
+    },
+    {
+      "runId": "run_7adcd0_0040",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:15",
+        "citation: citation_does_not_support_claim: \"routed to capability: search — - search: find code by concept or identifier acr…\"",
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_7adcd0_0040.json"
+    },
+    {
+      "runId": "run_f483c4_0041",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_f483c4_0041.json"
+    },
+    {
+      "runId": "run_6f5ca7_0042",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_6f5ca7_0042.json"
+    },
+    {
+      "runId": "run_565ffc_0043",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_565ffc_0043.json"
+    },
+    {
+      "runId": "run_23ff80_0047",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: search — - search: find code by concept or identifier acr…\""
+      ],
+      "artifact": "replay-artifacts/run_23ff80_0047.json"
+    },
+    {
+      "runId": "run_29dcdd_0048",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:15",
+        "citation: citation_does_not_support_claim: \"routed to capability: search — - search: find code by concept or identifier acr…\"",
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_29dcdd_0048.json"
+    },
+    {
+      "runId": "run_92efe8_0049",
+      "testCaseId": "omrt_natural_language",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_92efe8_0049.json"
+    },
+    {
+      "runId": "run_cb590e_0050",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_cb590e_0050.json"
+    },
+    {
+      "runId": "run_14bf8d_0051",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_14bf8d_0051.json"
+    },
+    {
+      "runId": "run_2dfe69_0052",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_2dfe69_0052.json"
+    },
+    {
+      "runId": "run_ba9e3c_0053",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:15",
+        "citation: citation_does_not_support_claim: \"routed to capability: search — - search: find code by concept or identifier acr…\"",
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_ba9e3c_0053.json"
+    },
+    {
+      "runId": "run_f38eef_0054",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: search — - search: find code by concept or identifier acr…\""
+      ],
+      "artifact": "replay-artifacts/run_f38eef_0054.json"
+    },
+    {
+      "runId": "run_b487c4_0058",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_b487c4_0058.json"
+    },
+    {
+      "runId": "run_d1ab07_0059",
+      "testCaseId": "omrt_concept_search",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_d1ab07_0059.json"
+    },
+    {
+      "runId": "run_555fbf_0060",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_555fbf_0060.json"
+    },
+    {
+      "runId": "run_7caa35_0061",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_7caa35_0061.json"
+    },
+    {
+      "runId": "run_e95851_0062",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_e95851_0062.json"
+    },
+    {
+      "runId": "run_118d2e_0063",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:15",
+        "citation: citation_does_not_support_claim: \"routed to capability: search — - search: find code by concept or identifier acr…\"",
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_118d2e_0063.json"
+    },
+    {
+      "runId": "run_990b64_0064",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: search — - search: find code by concept or identifier acr…\""
+      ],
+      "artifact": "replay-artifacts/run_990b64_0064.json"
+    },
+    {
+      "runId": "run_5d5ee2_0068",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_5d5ee2_0068.json"
+    },
+    {
+      "runId": "run_5c9130_0069",
+      "testCaseId": "omrt_neg_invented_capability",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_5c9130_0069.json"
+    },
+    {
+      "runId": "run_59f813_0070",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_59f813_0070.json"
+    },
+    {
+      "runId": "run_f4c994_0071",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_f4c994_0071.json"
+    },
+    {
+      "runId": "run_04119a_0072",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/CAPABILITIES.md:15",
+        "citation: citation_does_not_support_claim: \"routed to capability: search — - search: find code by concept or identifier acr…\"",
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md"
+      ],
+      "artifact": "replay-artifacts/run_04119a_0072.json"
+    },
+    {
+      "runId": "run_25af57_0073",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_25af57_0073.json"
+    },
+    {
+      "runId": "run_1e961a_0075",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: search",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/CAPABILITIES.md",
+        "unsupported_claim: answered_claim_without_citation: \"routed to capability: search — - search: find code by concept or identifier acr…\""
+      ],
+      "artifact": "replay-artifacts/run_1e961a_0075.json"
+    },
+    {
+      "runId": "run_bf0014_0078",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "tool_call: tool_order_violation: route_query must come before capability_registry"
+      ],
+      "artifact": "replay-artifacts/run_bf0014_0078.json"
+    },
+    {
+      "runId": "run_532863_0079",
+      "testCaseId": "omrt_neg_destructive_query",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_532863_0079.json"
+    }
+  ],
+  "notes": [
+    "Latency, token counts, and estimated cost are DEMO/ESTIMATED values produced by the offline mock adapters.",
+    "Trace spans are simplified demo telemetry (OpenTelemetry-shaped JSON), not exported to a live collector by default.",
+    "Citation validation is keyword-based (non-semantic) for the MVP."
+  ]
+}

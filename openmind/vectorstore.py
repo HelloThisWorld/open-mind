@@ -57,6 +57,7 @@ def backend_name() -> str:
 class _Store:
     def add(self, ids, embeddings, documents, metadatas): ...
     def upsert(self, ids, embeddings, documents, metadatas): ...
+    def update_metadatas(self, ids, metadatas): ...
     def delete(self, ids=None, where=None): ...
     def get(self, where=None, ids=None) -> Dict[str, Any]: ...
     def query(self, query_embedding, n_results=10, where=None) -> Dict[str, Any]: ...
@@ -85,6 +86,13 @@ class ChromaStore(_Store):
             return
         self._col.upsert(ids=ids, embeddings=_aslist(embeddings),
                          documents=documents, metadatas=_clean_metas(metadatas))
+
+    def update_metadatas(self, ids, metadatas):
+        """Metadata-only update — stored embeddings/documents are untouched, so
+        no re-embedding cost is paid for flag flips like ``stale``."""
+        if not ids:
+            return
+        self._col.update(ids=ids, metadatas=_clean_metas(metadatas))
 
     def delete(self, ids=None, where=None):
         if ids:
@@ -179,6 +187,12 @@ class NumpyStore(_Store):
                 "document": documents[i],
                 "metadata": _clean_metas([metadatas[i]])[0],
             }
+        self._save()
+
+    def update_metadatas(self, ids, metadatas):
+        for i, _id in enumerate(ids):
+            if _id in self._data:
+                self._data[_id]["metadata"] = _clean_metas([metadatas[i]])[0]
         self._save()
 
     def delete(self, ids=None, where=None):

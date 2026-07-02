@@ -1,0 +1,510 @@
+{
+  "generatedAt": "2026-07-02T14:52:48.453Z",
+  "skill": {
+    "name": "openmind-code-graphs",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "openmind-flaky",
+    "type": "openmind-python-bridge-unstable"
+  },
+  "config": {
+    "runsPerCase": 10,
+    "threshold": 0.9,
+    "outputDir": "reports/openmind-code-graphs-flaky"
+  },
+  "totals": {
+    "testCases": 8,
+    "totalRuns": 80,
+    "passedRuns": 47,
+    "failedRuns": 33
+  },
+  "metrics": {
+    "totalRuns": 80,
+    "passedRuns": 47,
+    "failedRuns": 33,
+    "passRate": 0.5875,
+    "schemaValidRate": 0.9,
+    "citationValidRate": 0.8,
+    "unsupportedClaimRate": 0.2875,
+    "toolErrorRate": 0.025,
+    "retryCount": 0,
+    "latencyMsP50": 0,
+    "latencyMsP95": 1,
+    "latencyMsP99": 351,
+    "tokenInputTotal": 16170,
+    "tokenOutputTotal": 8296,
+    "estimatedCostUsd": 0.020542
+  },
+  "result": "FAILED",
+  "gateReasons": [
+    "overall pass rate 58.8% is below threshold 90.0%",
+    "test case \"omcg_post_entry_def\" pass rate 50.0% is below floor 90.0%",
+    "test case \"omcg_convert_def\" pass rate 40.0% is below floor 90.0%",
+    "test case \"omcg_ratetable_def\" pass rate 50.0% is below floor 90.0%",
+    "test case \"omcg_balance_of_def\" pass rate 60.0% is below floor 90.0%",
+    "test case \"omcg_convert_usage\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omcg_post_entry_usage\" pass rate 40.0% is below floor 90.0%"
+  ],
+  "perCase": [
+    {
+      "id": "omcg_post_entry_def",
+      "name": "where is post_entry defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 5,
+      "passRate": 0.5,
+      "citationValidRate": 0.8,
+      "failureCount": 5,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omcg_convert_def",
+      "name": "where is convert defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 4,
+      "passRate": 0.4,
+      "citationValidRate": 0.7,
+      "failureCount": 6,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omcg_ratetable_def",
+      "name": "where is RateTable defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 5,
+      "passRate": 0.5,
+      "citationValidRate": 0.7,
+      "failureCount": 5,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omcg_balance_of_def",
+      "name": "where is balance_of defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 6,
+      "passRate": 0.6,
+      "citationValidRate": 0.8,
+      "failureCount": 4,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omcg_convert_usage",
+      "name": "who uses convert (real usage edge only)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.7,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omcg_post_entry_usage",
+      "name": "who uses post_entry (real usage edge only)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 4,
+      "passRate": 0.4,
+      "citationValidRate": 0.7,
+      "failureCount": 6,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omcg_neg_warp",
+      "name": "where is warp_speed defined (symbol absent)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_neg_teleport",
+      "name": "who uses teleport_user (symbol absent)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    }
+  ],
+  "failureBreakdown": [
+    {
+      "reason": "unsupported_claim: answered_claim_without_citation",
+      "count": 18
+    },
+    {
+      "reason": "citation: required_symbol_not_cited",
+      "count": 16
+    },
+    {
+      "reason": "citation: expected_citation_file_not_cited",
+      "count": 13
+    },
+    {
+      "reason": "citation: citation_does_not_support_claim",
+      "count": 11
+    },
+    {
+      "reason": "schema: status",
+      "count": 8
+    },
+    {
+      "reason": "unsupported_claim: expected_answer_but_got_maybe",
+      "count": 8
+    },
+    {
+      "reason": "citation: citation_line_out_of_range",
+      "count": 7
+    },
+    {
+      "reason": "tool_call: tool_order_violation",
+      "count": 2
+    }
+  ],
+  "failedRuns": [
+    {
+      "runId": "run_fbb010_0000",
+      "testCaseId": "omcg_post_entry_def",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_fbb010_0000.json"
+    },
+    {
+      "runId": "run_9b5978_0002",
+      "testCaseId": "omcg_post_entry_def",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_9b5978_0002.json"
+    },
+    {
+      "runId": "run_1f6df2_0003",
+      "testCaseId": "omcg_post_entry_def",
+      "failureReasons": [
+        "citation: citation_does_not_support_claim: \"post_entry is defined in fixtures/openmind-corpus/app/ledger.py at line 8 (func…\"",
+        "citation: required_symbol_not_cited: post_entry"
+      ],
+      "artifact": "replay-artifacts/run_1f6df2_0003.json"
+    },
+    {
+      "runId": "run_e0886b_0004",
+      "testCaseId": "omcg_post_entry_def",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: post_entry",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/ledger.py",
+        "unsupported_claim: answered_claim_without_citation: \"post_entry is defined in fixtures/openmind-corpus/app/ledger.py at line 8 (func…\""
+      ],
+      "artifact": "replay-artifacts/run_e0886b_0004.json"
+    },
+    {
+      "runId": "run_602d0c_0008",
+      "testCaseId": "omcg_post_entry_def",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_602d0c_0008.json"
+    },
+    {
+      "runId": "run_879a8c_0010",
+      "testCaseId": "omcg_convert_def",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_879a8c_0010.json"
+    },
+    {
+      "runId": "run_42d0f7_0011",
+      "testCaseId": "omcg_convert_def",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/rates.py:25",
+        "citation: citation_does_not_support_claim: \"convert is defined in fixtures/openmind-corpus/app/rates.py at line 18 (functio…\"",
+        "citation: required_symbol_not_cited: convert",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py"
+      ],
+      "artifact": "replay-artifacts/run_42d0f7_0011.json"
+    },
+    {
+      "runId": "run_3e4e63_0012",
+      "testCaseId": "omcg_convert_def",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_3e4e63_0012.json"
+    },
+    {
+      "runId": "run_1fafa2_0016",
+      "testCaseId": "omcg_convert_def",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: convert",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py",
+        "unsupported_claim: answered_claim_without_citation: \"convert is defined in fixtures/openmind-corpus/app/rates.py at line 18 (functio…\""
+      ],
+      "artifact": "replay-artifacts/run_1fafa2_0016.json"
+    },
+    {
+      "runId": "run_c3884b_0018",
+      "testCaseId": "omcg_convert_def",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_c3884b_0018.json"
+    },
+    {
+      "runId": "run_a11eac_0019",
+      "testCaseId": "omcg_convert_def",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/rates.py:25",
+        "citation: citation_does_not_support_claim: \"convert is defined in fixtures/openmind-corpus/app/rates.py at line 18 (functio…\"",
+        "citation: required_symbol_not_cited: convert",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py"
+      ],
+      "artifact": "replay-artifacts/run_a11eac_0019.json"
+    },
+    {
+      "runId": "run_1c9f40_0021",
+      "testCaseId": "omcg_ratetable_def",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: RateTable",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py",
+        "unsupported_claim: answered_claim_without_citation: \"RateTable is defined in fixtures/openmind-corpus/app/rates.py at line 6 (class)…\""
+      ],
+      "artifact": "replay-artifacts/run_1c9f40_0021.json"
+    },
+    {
+      "runId": "run_f8afa4_0025",
+      "testCaseId": "omcg_ratetable_def",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_f8afa4_0025.json"
+    },
+    {
+      "runId": "run_015c7c_0026",
+      "testCaseId": "omcg_ratetable_def",
+      "failureReasons": [
+        "citation: citation_does_not_support_claim: \"RateTable is defined in fixtures/openmind-corpus/app/rates.py at line 6 (class)…\"",
+        "citation: required_symbol_not_cited: RateTable"
+      ],
+      "artifact": "replay-artifacts/run_015c7c_0026.json"
+    },
+    {
+      "runId": "run_72d7c9_0027",
+      "testCaseId": "omcg_ratetable_def",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_72d7c9_0027.json"
+    },
+    {
+      "runId": "run_79bb7d_0029",
+      "testCaseId": "omcg_ratetable_def",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: RateTable",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py",
+        "unsupported_claim: answered_claim_without_citation: \"RateTable is defined in fixtures/openmind-corpus/app/rates.py at line 6 (class)…\""
+      ],
+      "artifact": "replay-artifacts/run_79bb7d_0029.json"
+    },
+    {
+      "runId": "run_1fb743_0033",
+      "testCaseId": "omcg_balance_of_def",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: balance_of",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/ledger.py",
+        "unsupported_claim: answered_claim_without_citation: \"balance_of is defined in fixtures/openmind-corpus/app/ledger.py at line 16 (fun…\""
+      ],
+      "artifact": "replay-artifacts/run_1fb743_0033.json"
+    },
+    {
+      "runId": "run_b0de82_0034",
+      "testCaseId": "omcg_balance_of_def",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/ledger.py:23",
+        "citation: citation_does_not_support_claim: \"balance_of is defined in fixtures/openmind-corpus/app/ledger.py at line 16 (fun…\"",
+        "citation: required_symbol_not_cited: balance_of",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/ledger.py"
+      ],
+      "artifact": "replay-artifacts/run_b0de82_0034.json"
+    },
+    {
+      "runId": "run_d9d518_0035",
+      "testCaseId": "omcg_balance_of_def",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_d9d518_0035.json"
+    },
+    {
+      "runId": "run_7108e0_0037",
+      "testCaseId": "omcg_balance_of_def",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_7108e0_0037.json"
+    },
+    {
+      "runId": "run_a0c190_0040",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_a0c190_0040.json"
+    },
+    {
+      "runId": "run_1fcc9a_0041",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/rates.py:25",
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/rates.py:25",
+        "citation: citation_does_not_support_claim: \"convert is defined in fixtures/openmind-corpus/app/rates.py at line 18 (functio…\"",
+        "citation: citation_does_not_support_claim: \"convert is referenced by 1 file(s): fixtures/openmind-corpus/app/ledger.py\"",
+        "citation: required_symbol_not_cited: convert",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py"
+      ],
+      "artifact": "replay-artifacts/run_1fcc9a_0041.json"
+    },
+    {
+      "runId": "run_d907c8_0042",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_d907c8_0042.json"
+    },
+    {
+      "runId": "run_a52eea_0043",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "tool_call: tool_order_violation: symbol_definition must come before symbol_usage"
+      ],
+      "artifact": "replay-artifacts/run_a52eea_0043.json"
+    },
+    {
+      "runId": "run_308b5a_0046",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: convert",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py",
+        "unsupported_claim: answered_claim_without_citation: \"convert is defined in fixtures/openmind-corpus/app/rates.py at line 18 (functio…\"",
+        "unsupported_claim: answered_claim_without_citation: \"convert is referenced by 1 file(s): fixtures/openmind-corpus/app/ledger.py\""
+      ],
+      "artifact": "replay-artifacts/run_308b5a_0046.json"
+    },
+    {
+      "runId": "run_9b6bdf_0048",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_9b6bdf_0048.json"
+    },
+    {
+      "runId": "run_0c6a4c_0049",
+      "testCaseId": "omcg_convert_usage",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/rates.py:25",
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/app/rates.py:25",
+        "citation: citation_does_not_support_claim: \"convert is defined in fixtures/openmind-corpus/app/rates.py at line 18 (functio…\"",
+        "citation: citation_does_not_support_claim: \"convert is referenced by 1 file(s): fixtures/openmind-corpus/app/ledger.py\"",
+        "citation: required_symbol_not_cited: convert",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py"
+      ],
+      "artifact": "replay-artifacts/run_0c6a4c_0049.json"
+    },
+    {
+      "runId": "run_c4dd41_0050",
+      "testCaseId": "omcg_post_entry_usage",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: post_entry",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/ledger.py",
+        "unsupported_claim: answered_claim_without_citation: \"post_entry is defined in fixtures/openmind-corpus/app/ledger.py at line 8 (func…\"",
+        "unsupported_claim: answered_claim_without_citation: \"post_entry is referenced by 1 file(s): fixtures/openmind-corpus/app/main.py\""
+      ],
+      "artifact": "replay-artifacts/run_c4dd41_0050.json"
+    },
+    {
+      "runId": "run_b668ce_0054",
+      "testCaseId": "omcg_post_entry_usage",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_b668ce_0054.json"
+    },
+    {
+      "runId": "run_285314_0055",
+      "testCaseId": "omcg_post_entry_usage",
+      "failureReasons": [
+        "tool_call: tool_order_violation: symbol_definition must come before symbol_usage"
+      ],
+      "artifact": "replay-artifacts/run_285314_0055.json"
+    },
+    {
+      "runId": "run_198950_0056",
+      "testCaseId": "omcg_post_entry_usage",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_198950_0056.json"
+    },
+    {
+      "runId": "run_693121_0057",
+      "testCaseId": "omcg_post_entry_usage",
+      "failureReasons": [
+        "citation: citation_does_not_support_claim: \"post_entry is defined in fixtures/openmind-corpus/app/ledger.py at line 8 (func…\"",
+        "citation: citation_does_not_support_claim: \"post_entry is referenced by 1 file(s): fixtures/openmind-corpus/app/main.py\"",
+        "citation: required_symbol_not_cited: post_entry"
+      ],
+      "artifact": "replay-artifacts/run_693121_0057.json"
+    },
+    {
+      "runId": "run_ea8fba_0058",
+      "testCaseId": "omcg_post_entry_usage",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: post_entry",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/ledger.py",
+        "unsupported_claim: answered_claim_without_citation: \"post_entry is defined in fixtures/openmind-corpus/app/ledger.py at line 8 (func…\"",
+        "unsupported_claim: answered_claim_without_citation: \"post_entry is referenced by 1 file(s): fixtures/openmind-corpus/app/main.py\""
+      ],
+      "artifact": "replay-artifacts/run_ea8fba_0058.json"
+    }
+  ],
+  "notes": [
+    "Latency, token counts, and estimated cost are DEMO/ESTIMATED values produced by the offline mock adapters.",
+    "Trace spans are simplified demo telemetry (OpenTelemetry-shaped JSON), not exported to a live collector by default.",
+    "Citation validation is keyword-based (non-semantic) for the MVP."
+  ]
+}

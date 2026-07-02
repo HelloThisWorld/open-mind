@@ -15,6 +15,7 @@ context, saved solved cases, and an MCP tool surface.
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Agent ready](https://img.shields.io/badge/AI%20Agents-MCP%20tools-8a2be2.svg)](#use-it-from-an-agent-mcp)
 [![Verification first](https://img.shields.io/badge/verification-file%3Aline%20evidence-e8590c.svg)](#verification-first-design)
+[![Skill evals](https://img.shields.io/badge/skill%20evals-250%2F250%20runs%20passed-2ea44f.svg)](#measured-skill-verification)
 [![Local first](https://img.shields.io/badge/local--first-audited%20egress-555.svg)](#local-first-boundary)
 [![Built with skill template](https://img.shields.io/badge/built%20with-skill%20template-8250df.svg)](https://github.com/HelloThisWorld/agent-skill-verification-template)
 
@@ -41,6 +42,7 @@ prefers a precise "not found" over a plausible hallucination.
 - [Quick Start](#quick-start)
 - [Use It From An Agent (MCP)](#use-it-from-an-agent-mcp)
 - [Capabilities As Skills](#capabilities-as-skills)
+- [Measured Skill Verification](#measured-skill-verification)
 - [Implementation Map](#implementation-map)
 - [Local-First Boundary](#local-first-boundary)
 - [Configuration](#configuration)
@@ -338,18 +340,102 @@ The tracked repository documents core capabilities as `SKILL.md` contracts:
 
 | Skill contract | What it covers | Status |
 |---|---|---|
-| [`glossary`](skills/glossary/SKILL.md) | Verbatim term/acronym extraction and exact lookup. | Implemented |
-| [`code-graphs`](skills/code-graphs/SKILL.md) | Structure, dependency, call, and entry-point-flow maps. | Implemented |
-| [`capability-router`](skills/capability-router/SKILL.md) | Agent-style routing with deterministic fallback. | Implemented |
+| [`glossary`](skills/glossary/SKILL.md) | Verbatim term/acronym extraction and exact lookup. | Implemented · verified 90/90 runs |
+| [`code-graphs`](skills/code-graphs/SKILL.md) | Structure, dependency, call, and entry-point-flow maps. | Implemented · verified 80/80 runs |
+| [`capability-router`](skills/capability-router/SKILL.md) | Agent-style routing with deterministic fallback. | Implemented · verified 80/80 runs |
 
 These are Claude Skills-style capability specifications: small, explicit,
-auditable units with deterministic contracts. Every skill here is built with the
+auditable units with deterministic contracts. Every skill is paired with the
 [Agent Skill Verification Template](https://github.com/HelloThisWorld/agent-skill-verification-template)
 — a companion project that treats agent skills as production components, pairing a
-model-independent `SKILL.md` contract with an offline eval harness, source-grounding
-validators, replayable run artifacts, and a CI quality gate. Packaging them as
+model-independent contract with an offline eval harness, source-grounding
+validators, replayable run artifacts, and a release gate. The "verified" numbers
+above are measured, not asserted — see
+[Measured Skill Verification](#measured-skill-verification) for the methodology,
+the latest results, and how to reproduce them. Packaging the skills as
 installable Claude Skills is listed in the roadmap; the current repo already exposes
 the core tool surface through REST and MCP.
+
+---
+
+## Measured Skill Verification
+
+The three capability skills are evaluated end to end with the
+[Agent Skill Verification Template](https://github.com/HelloThisWorld/agent-skill-verification-template)
+as an **independent harness**. The template does not reimplement Open Mind: it
+drives the real Python implementation (`openmind/glossary.py`,
+`openmind/structure.py`, `openmind/router.py`) through
+[`openmind/skill_bridge.py`](openmind/skill_bridge.py), a JSON-lines
+stdin/stdout bridge that builds the glossary and structure artifacts for a
+fixture corpus and answers lookup/usage/definition/route requests from them.
+
+Each skill has a machine-readable contract, happy-path test cases, and negative
+(honesty) test cases in the template repo (`skills/openmind-*/`,
+`testcases/openmind-*.json`). Every case runs **10 times**, and every run is
+graded by four validators:
+
+1. **Schema** — the output matches the required structured shape.
+2. **Citation** — the harness independently re-reads every `file:line` Open
+   Mind cites and checks the line exists, supports the claim, and carries the
+   queried term/symbol. A fabricated citation fails the run.
+3. **Unsupported claim** — unknown inputs must return `insufficient_evidence`
+   with zero claims (never an invented answer); answered claims must all be
+   cited; forbidden hallucination markers must be absent.
+4. **Tool call** — the contract's required tools were called, in order.
+
+### Latest results (2026-07-02 · 10 runs per case · gate threshold 90%)
+
+| Skill under eval | Test cases | Total runs | Pass rate | Citation valid | Tool errors | Gate |
+|---|---|---|---|---|---|---|
+| `openmind-glossary` | 9 (7 happy + 2 negative) | 90 | **100%** | 100% | 0% | PASSED |
+| `openmind-code-graphs` | 8 (6 + 2) | 80 | **100%** | 100% | 0% | PASSED |
+| `openmind-capability-router` | 8 (6 + 2) | 80 | **100%** | 100% | 0% | PASSED |
+
+**250/250 runs green across repeated executions** — consistent with the
+determinism contract (same input → same output). The negative cases pass by
+*declining*: unknown terms and symbols return `insufficient_evidence` with zero
+claims, and the router cannot be talked into a capability outside its documented
+set (a query asking it to "invent a new capability called quantum" routes to the
+safe `search` floor, and "quantum" never appears as a routed capability).
+
+Machine-readable snapshots of these runs are committed under
+[`docs/verification/`](docs/verification/).
+
+### The gate demonstrably catches bad outputs
+
+A green report only means something if the same pipeline turns red on bad
+output. The template's flaky-twin methodology perturbs Open Mind's correct
+outputs per run seed — dropped citations, line numbers shifted by +7, an invalid
+status value, reversed tool order, an invented uncited claim — and the gate
+fails exactly as it should:
+
+| Skill under seeded faults | Pass rate | Gate | Replay artifacts |
+|---|---|---|---|
+| `openmind-glossary` | 52.2% | FAILED | 43 |
+| `openmind-code-graphs` | 58.8% | FAILED | 33 |
+| `openmind-capability-router` | 33.8% | FAILED | 53 |
+
+Every seeded fault maps back to the validator built to catch it
+(`citation_line_out_of_range`, `answered_claim_without_citation`,
+`tool_order_violation`, schema rejection of an invalid status, …), and every
+failed run leaves a replay artifact with the exact input, output, tool trace,
+and verdict.
+
+### Reproduce
+
+```bash
+# clone the harness next to this repo (or point OPENMIND_REPO at this checkout)
+git clone https://github.com/HelloThisWorld/agent-skill-verification-template.git
+cd agent-skill-verification-template
+npm install
+
+npm run eval:openmind          # all three skills; non-zero exit if the gate fails
+npm run eval:openmind:flaky    # proof the gate catches seeded failures
+```
+
+Each eval writes a self-contained `report.html`, a `summary.json`, Prometheus
+metrics, structured JSONL events, and (on failure) per-run replay artifacts
+under the template's `reports/` directory.
 
 ---
 
@@ -373,6 +459,7 @@ openmind/
   router.py        deterministic capability routing plus optional model refine
   codemod.py       preview/apply literal edits with test gating
   mcp_server.py    MCP stdio server
+  skill_bridge.py  JSON-lines bridge exposing the skills to the eval harness
   main.py          FastAPI REST/SSE API and single-page UI
   netguard.py      audited outbound HTTP guard for app-controlled egress
   machine.py       machine-local source roots and GitHub source links
@@ -435,8 +522,16 @@ pip install onnxruntime-gpu
 
 ## Testing
 
-Focused acceptance checks cover the verification contracts that are implemented
-in this build:
+Two layers of checks back the claims in this README.
+
+**Skill-level eval harness** — the three capability skills are verified with the
+[Agent Skill Verification Template](https://github.com/HelloThisWorld/agent-skill-verification-template)
+(10 runs per test case, four validators, release gate); see
+[Measured Skill Verification](#measured-skill-verification) for the latest
+results and reproduction steps.
+
+**Focused acceptance scripts** — small checks covering the verification
+contracts implemented in this build:
 
 ```bash
 python tests/verify_glossary.py       # verbatim extraction, provenance, honest miss
@@ -448,8 +543,7 @@ python tests/verify_resources.py      # ingest RAM guard behavior
 ```
 
 These are intentionally small acceptance scripts rather than a hidden benchmark
-suite. They are useful interview artifacts because each one maps to a concrete
-reliability claim in this README.
+suite; each one maps to a concrete reliability claim in this README.
 
 ---
 
@@ -460,7 +554,8 @@ The following are not claimed as complete in the current build:
 - installable Claude Skill packaging for the tracked capability contracts;
 - deeper change impact analysis beyond name-based caller/callee neighborhoods;
 - IDE extension integration;
-- first-class CI checks for hallucination resistance and source-citation quality;
+- running the skill eval gate (hallucination resistance and source-citation
+  quality are already measured by the companion harness) in this repo's own CI;
 - an output citation verifier for model answers;
 - broader tree-sitter parsers beyond Java;
 - graph-specific MCP tools for node expansion and graph navigation;

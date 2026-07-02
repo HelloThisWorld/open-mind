@@ -366,7 +366,9 @@ async def stream_job(job_id: str) -> StreamingResponse:
         last = None
         idle = 0
         while True:
-            job = db.get_job(job_id)
+            # off the event loop: a slow SQLite read must not stall other
+            # clients' streams (or any other async endpoint) for its duration
+            job = await asyncio.to_thread(db.get_job, job_id)
             if not job:
                 yield f"event: error\ndata: {json.dumps({'error':'not found'})}\n\n"
                 return

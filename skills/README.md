@@ -20,6 +20,14 @@ Each capability is small, independently testable (`tests/verify_*.py`), and comp
 the router chooses one, and the glossary's usage profile is built from the
 code-graphs structure map.
 
+All three skills are additionally **verified by an independent eval harness** —
+the [Agent Skill Verification Template](https://github.com/HelloThisWorld/agent-skill-verification-template)
+runs the real implementation through `openmind/skill_bridge.py` (10 runs per
+test case; schema / citation / unsupported-claim / tool-call validators; release
+gate). Latest results: 250/250 runs passed; see the README's
+[Measured Skill Verification](../README.md#measured-skill-verification) section
+and the snapshots in [`docs/verification/`](../docs/verification/).
+
 The application also includes optional audited Wikipedia enrichment in
 `openmind/wikienrich.py`; installable Claude Skill packaging for that enrichment
 is not part of the tracked repository yet.

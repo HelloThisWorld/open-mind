@@ -1,0 +1,154 @@
+{
+  "generatedAt": "2026-07-02T14:53:14.370Z",
+  "skill": {
+    "name": "openmind-code-graphs",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "openmind",
+    "type": "openmind-python-bridge"
+  },
+  "config": {
+    "runsPerCase": 10,
+    "threshold": 0.9,
+    "outputDir": "reports/openmind-code-graphs"
+  },
+  "totals": {
+    "testCases": 8,
+    "totalRuns": 80,
+    "passedRuns": 80,
+    "failedRuns": 0
+  },
+  "metrics": {
+    "totalRuns": 80,
+    "passedRuns": 80,
+    "failedRuns": 0,
+    "passRate": 1,
+    "schemaValidRate": 1,
+    "citationValidRate": 1,
+    "unsupportedClaimRate": 0,
+    "toolErrorRate": 0,
+    "retryCount": 0,
+    "latencyMsP50": 0,
+    "latencyMsP95": 1,
+    "latencyMsP99": 340,
+    "tokenInputTotal": 16170,
+    "tokenOutputTotal": 8350,
+    "estimatedCostUsd": 0.02062
+  },
+  "result": "PASSED",
+  "gateReasons": [],
+  "perCase": [
+    {
+      "id": "omcg_post_entry_def",
+      "name": "where is post_entry defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_convert_def",
+      "name": "where is convert defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_ratetable_def",
+      "name": "where is RateTable defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_balance_of_def",
+      "name": "where is balance_of defined",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_convert_usage",
+      "name": "who uses convert (real usage edge only)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_post_entry_usage",
+      "name": "who uses post_entry (real usage edge only)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_neg_warp",
+      "name": "where is warp_speed defined (symbol absent)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omcg_neg_teleport",
+      "name": "who uses teleport_user (symbol absent)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    }
+  ],
+  "failureBreakdown": [],
+  "failedRuns": [],
+  "notes": [
+    "Latency, token counts, and estimated cost are DEMO/ESTIMATED values produced by the offline mock adapters.",
+    "Trace spans are simplified demo telemetry (OpenTelemetry-shaped JSON), not exported to a live collector by default.",
+    "Citation validation is keyword-based (non-semantic) for the MVP."
+  ]
+}

@@ -1,0 +1,606 @@
+{
+  "generatedAt": "2026-07-02T14:52:47.671Z",
+  "skill": {
+    "name": "openmind-glossary",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "openmind-flaky",
+    "type": "openmind-python-bridge-unstable"
+  },
+  "config": {
+    "runsPerCase": 10,
+    "threshold": 0.9,
+    "outputDir": "reports/openmind-glossary-flaky"
+  },
+  "totals": {
+    "testCases": 9,
+    "totalRuns": 90,
+    "passedRuns": 47,
+    "failedRuns": 43
+  },
+  "metrics": {
+    "totalRuns": 90,
+    "passedRuns": 47,
+    "failedRuns": 43,
+    "passRate": 0.5222,
+    "schemaValidRate": 0.9,
+    "citationValidRate": 0.8,
+    "unsupportedClaimRate": 0.2889,
+    "toolErrorRate": 0.0889,
+    "retryCount": 0,
+    "latencyMsP50": 0,
+    "latencyMsP95": 1,
+    "latencyMsP99": 346,
+    "tokenInputTotal": 21440,
+    "tokenOutputTotal": 9611,
+    "estimatedCostUsd": 0.025144
+  },
+  "result": "FAILED",
+  "gateReasons": [
+    "overall pass rate 52.2% is below threshold 90.0%",
+    "test case \"omgl_ledger\" pass rate 40.0% is below floor 90.0%",
+    "test case \"omgl_posting\" pass rate 50.0% is below floor 90.0%",
+    "test case \"omgl_ratetable\" pass rate 50.0% is below floor 90.0%",
+    "test case \"omgl_audittrail\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omgl_fx\" pass rate 40.0% is below floor 90.0%",
+    "test case \"omgl_sla\" pass rate 30.0% is below floor 90.0%",
+    "test case \"omgl_stp\" pass rate 30.0% is below floor 90.0%"
+  ],
+  "perCase": [
+    {
+      "id": "omgl_ledger",
+      "name": "define Ledger (glossary table term)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 4,
+      "passRate": 0.4,
+      "citationValidRate": 0.7,
+      "failureCount": 6,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_posting",
+      "name": "glossary Posting (glossary table term)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 5,
+      "passRate": 0.5,
+      "citationValidRate": 0.8,
+      "failureCount": 5,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_ratetable",
+      "name": "define RateTable (term that is also a code symbol)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 5,
+      "passRate": 0.5,
+      "citationValidRate": 0.8,
+      "failureCount": 5,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_audittrail",
+      "name": "define AuditTrail (glossary table term)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.8,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_fx",
+      "name": "what is FX (definition-line acronym)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 4,
+      "passRate": 0.4,
+      "citationValidRate": 0.7,
+      "failureCount": 6,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_sla",
+      "name": "what is SLA (definition-line acronym)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.7,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_stp",
+      "name": "define STP (README acronym expansion)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 3,
+      "passRate": 0.3,
+      "citationValidRate": 0.7,
+      "failureCount": 7,
+      "minPassRate": 0.9,
+      "result": "FAILED"
+    },
+    {
+      "id": "omgl_neg_blockchain",
+      "name": "define Blockchain (not in the corpus)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_neg_kubernetes",
+      "name": "what is Kubernetes (not in the corpus)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    }
+  ],
+  "failureBreakdown": [
+    {
+      "reason": "citation: required_symbol_not_cited",
+      "count": 18
+    },
+    {
+      "reason": "unsupported_claim: answered_claim_without_citation",
+      "count": 18
+    },
+    {
+      "reason": "citation: expected_citation_file_not_cited",
+      "count": 17
+    },
+    {
+      "reason": "citation: citation_does_not_support_claim",
+      "count": 9
+    },
+    {
+      "reason": "schema: status",
+      "count": 9
+    },
+    {
+      "reason": "unsupported_claim: expected_answer_but_got_maybe",
+      "count": 9
+    },
+    {
+      "reason": "tool_call: tool_order_violation",
+      "count": 8
+    },
+    {
+      "reason": "citation: citation_line_out_of_range",
+      "count": 7
+    }
+  ],
+  "failedRuns": [
+    {
+      "runId": "run_d1385c_0001",
+      "testCaseId": "omgl_ledger",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: Ledger",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"Ledger: The append-only book of balanced postings kept for every tenant.\""
+      ],
+      "artifact": "replay-artifacts/run_d1385c_0001.json"
+    },
+    {
+      "runId": "run_a7afba_0004",
+      "testCaseId": "omgl_ledger",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_a7afba_0004.json"
+    },
+    {
+      "runId": "run_a90372_0005",
+      "testCaseId": "omgl_ledger",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_a90372_0005.json"
+    },
+    {
+      "runId": "run_5b740d_0006",
+      "testCaseId": "omgl_ledger",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: Ledger"
+      ],
+      "artifact": "replay-artifacts/run_5b740d_0006.json"
+    },
+    {
+      "runId": "run_f3fabd_0007",
+      "testCaseId": "omgl_ledger",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_f3fabd_0007.json"
+    },
+    {
+      "runId": "run_ff939c_0009",
+      "testCaseId": "omgl_ledger",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: Ledger",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"Ledger: The append-only book of balanced postings kept for every tenant.\""
+      ],
+      "artifact": "replay-artifacts/run_ff939c_0009.json"
+    },
+    {
+      "runId": "run_0f3501_0012",
+      "testCaseId": "omgl_posting",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: Posting",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"Posting: One balanced debit/credit pair recorded against exactly two accounts.\""
+      ],
+      "artifact": "replay-artifacts/run_0f3501_0012.json"
+    },
+    {
+      "runId": "run_7258d1_0014",
+      "testCaseId": "omgl_posting",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_7258d1_0014.json"
+    },
+    {
+      "runId": "run_e43f50_0015",
+      "testCaseId": "omgl_posting",
+      "failureReasons": [
+        "citation: citation_does_not_support_claim: \"Posting: One balanced debit/credit pair recorded against exactly two accounts.\"",
+        "citation: required_symbol_not_cited: Posting"
+      ],
+      "artifact": "replay-artifacts/run_e43f50_0015.json"
+    },
+    {
+      "runId": "run_8d5752_0016",
+      "testCaseId": "omgl_posting",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_8d5752_0016.json"
+    },
+    {
+      "runId": "run_929169_0017",
+      "testCaseId": "omgl_posting",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_929169_0017.json"
+    },
+    {
+      "runId": "run_c7a463_0022",
+      "testCaseId": "omgl_ratetable",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: RateTable",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/app/rates.py",
+        "unsupported_claim: answered_claim_without_citation: \"RateTable: The daily currency conversion factors loaded from the treasury feed.\"",
+        "unsupported_claim: answered_claim_without_citation: \"RateTable is declared in code at fixtures/openmind-corpus/app/rates.py line 6 (…\""
+      ],
+      "artifact": "replay-artifacts/run_c7a463_0022.json"
+    },
+    {
+      "runId": "run_a18e21_0024",
+      "testCaseId": "omgl_ratetable",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_a18e21_0024.json"
+    },
+    {
+      "runId": "run_f9cb4e_0025",
+      "testCaseId": "omgl_ratetable",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/GLOSSARY.md:18",
+        "citation: citation_does_not_support_claim: \"RateTable: The daily currency conversion factors loaded from the treasury feed.\"",
+        "citation: citation_does_not_support_claim: \"RateTable is declared in code at fixtures/openmind-corpus/app/rates.py line 6 (…\"",
+        "citation: required_symbol_not_cited: RateTable",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md"
+      ],
+      "artifact": "replay-artifacts/run_f9cb4e_0025.json"
+    },
+    {
+      "runId": "run_1d1244_0026",
+      "testCaseId": "omgl_ratetable",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_1d1244_0026.json"
+    },
+    {
+      "runId": "run_25b09e_0027",
+      "testCaseId": "omgl_ratetable",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_25b09e_0027.json"
+    },
+    {
+      "runId": "run_2d902a_0030",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_2d902a_0030.json"
+    },
+    {
+      "runId": "run_e83972_0031",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_e83972_0031.json"
+    },
+    {
+      "runId": "run_255575_0032",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/GLOSSARY.md:19",
+        "citation: citation_does_not_support_claim: \"AuditTrail: The immutable event log written after every mutation.\"",
+        "citation: required_symbol_not_cited: AuditTrail",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md"
+      ],
+      "artifact": "replay-artifacts/run_255575_0032.json"
+    },
+    {
+      "runId": "run_e55507_0033",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_e55507_0033.json"
+    },
+    {
+      "runId": "run_650267_0035",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: AuditTrail",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"AuditTrail: The immutable event log written after every mutation.\""
+      ],
+      "artifact": "replay-artifacts/run_650267_0035.json"
+    },
+    {
+      "runId": "run_b7f868_0038",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_b7f868_0038.json"
+    },
+    {
+      "runId": "run_052e90_0039",
+      "testCaseId": "omgl_audittrail",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_052e90_0039.json"
+    },
+    {
+      "runId": "run_cbb9cd_0040",
+      "testCaseId": "omgl_fx",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: FX",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"FX: Foreign exchange — the currency conversion applied when an entry crosses cu…\""
+      ],
+      "artifact": "replay-artifacts/run_cbb9cd_0040.json"
+    },
+    {
+      "runId": "run_66ca39_0044",
+      "testCaseId": "omgl_fx",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_66ca39_0044.json"
+    },
+    {
+      "runId": "run_01423c_0045",
+      "testCaseId": "omgl_fx",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_01423c_0045.json"
+    },
+    {
+      "runId": "run_846381_0046",
+      "testCaseId": "omgl_fx",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_846381_0046.json"
+    },
+    {
+      "runId": "run_b57da9_0047",
+      "testCaseId": "omgl_fx",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/GLOSSARY.md:21",
+        "citation: citation_does_not_support_claim: \"FX: Foreign exchange — the currency conversion applied when an entry crosses cu…\"",
+        "citation: required_symbol_not_cited: FX",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md"
+      ],
+      "artifact": "replay-artifacts/run_b57da9_0047.json"
+    },
+    {
+      "runId": "run_ef33cb_0048",
+      "testCaseId": "omgl_fx",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: FX",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"FX: Foreign exchange — the currency conversion applied when an entry crosses cu…\""
+      ],
+      "artifact": "replay-artifacts/run_ef33cb_0048.json"
+    },
+    {
+      "runId": "run_f74c48_0050",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_f74c48_0050.json"
+    },
+    {
+      "runId": "run_5b980f_0051",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/GLOSSARY.md:23",
+        "citation: citation_does_not_support_claim: \"SLA: The response-time commitment printed on every tenant invoice.\"",
+        "citation: required_symbol_not_cited: SLA",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md"
+      ],
+      "artifact": "replay-artifacts/run_5b980f_0051.json"
+    },
+    {
+      "runId": "run_3d31ee_0052",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_3d31ee_0052.json"
+    },
+    {
+      "runId": "run_1dbecc_0053",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_1dbecc_0053.json"
+    },
+    {
+      "runId": "run_ea82ed_0056",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: SLA",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md",
+        "unsupported_claim: answered_claim_without_citation: \"SLA: The response-time commitment printed on every tenant invoice.\""
+      ],
+      "artifact": "replay-artifacts/run_ea82ed_0056.json"
+    },
+    {
+      "runId": "run_d7ad74_0058",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_d7ad74_0058.json"
+    },
+    {
+      "runId": "run_5e8df5_0059",
+      "testCaseId": "omgl_sla",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/GLOSSARY.md:23",
+        "citation: citation_does_not_support_claim: \"SLA: The response-time commitment printed on every tenant invoice.\"",
+        "citation: required_symbol_not_cited: SLA",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/GLOSSARY.md"
+      ],
+      "artifact": "replay-artifacts/run_5e8df5_0059.json"
+    },
+    {
+      "runId": "run_3f5c57_0060",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/README.md:11",
+        "citation: citation_does_not_support_claim: \"STP: straight-through processing\"",
+        "citation: required_symbol_not_cited: STP",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/README.md"
+      ],
+      "artifact": "replay-artifacts/run_3f5c57_0060.json"
+    },
+    {
+      "runId": "run_67d536_0061",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_67d536_0061.json"
+    },
+    {
+      "runId": "run_dbaa62_0062",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "tool_call: tool_order_violation: glossary_lookup must come before term_usage"
+      ],
+      "artifact": "replay-artifacts/run_dbaa62_0062.json"
+    },
+    {
+      "runId": "run_f036d8_0063",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "unsupported_claim: answered_claim_without_citation: \"Its official language is Esperanto.\""
+      ],
+      "artifact": "replay-artifacts/run_f036d8_0063.json"
+    },
+    {
+      "runId": "run_6be77b_0067",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "citation: required_symbol_not_cited: STP",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/README.md",
+        "unsupported_claim: answered_claim_without_citation: \"STP: straight-through processing\""
+      ],
+      "artifact": "replay-artifacts/run_6be77b_0067.json"
+    },
+    {
+      "runId": "run_691324_0068",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "citation: citation_line_out_of_range: fixtures/openmind-corpus/README.md:11",
+        "citation: citation_does_not_support_claim: \"STP: straight-through processing\"",
+        "citation: required_symbol_not_cited: STP",
+        "citation: expected_citation_file_not_cited: fixtures/openmind-corpus/README.md"
+      ],
+      "artifact": "replay-artifacts/run_691324_0068.json"
+    },
+    {
+      "runId": "run_ac520b_0069",
+      "testCaseId": "omgl_stp",
+      "failureReasons": [
+        "schema: status: Invalid enum value. Expected 'answered' | 'insufficient_evidence' | 'refused', received 'maybe'",
+        "unsupported_claim: expected_answer_but_got_maybe"
+      ],
+      "artifact": "replay-artifacts/run_ac520b_0069.json"
+    }
+  ],
+  "notes": [
+    "Latency, token counts, and estimated cost are DEMO/ESTIMATED values produced by the offline mock adapters.",
+    "Trace spans are simplified demo telemetry (OpenTelemetry-shaped JSON), not exported to a live collector by default.",
+    "Citation validation is keyword-based (non-semantic) for the MVP."
+  ]
+}

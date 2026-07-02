@@ -1,0 +1,154 @@
+{
+  "generatedAt": "2026-07-02T14:53:15.084Z",
+  "skill": {
+    "name": "openmind-capability-router",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "openmind",
+    "type": "openmind-python-bridge"
+  },
+  "config": {
+    "runsPerCase": 10,
+    "threshold": 0.9,
+    "outputDir": "reports/openmind-capability-router"
+  },
+  "totals": {
+    "testCases": 8,
+    "totalRuns": 80,
+    "passedRuns": 80,
+    "failedRuns": 0
+  },
+  "metrics": {
+    "totalRuns": 80,
+    "passedRuns": 80,
+    "failedRuns": 0,
+    "passRate": 1,
+    "schemaValidRate": 1,
+    "citationValidRate": 1,
+    "unsupportedClaimRate": 0,
+    "toolErrorRate": 0,
+    "retryCount": 0,
+    "latencyMsP50": 0,
+    "latencyMsP95": 1,
+    "latencyMsP99": 350,
+    "tokenInputTotal": 18140,
+    "tokenOutputTotal": 11070,
+    "estimatedCostUsd": 0.02569
+  },
+  "result": "PASSED",
+  "gateReasons": [],
+  "perCase": [
+    {
+      "id": "omrt_term_query",
+      "name": "route: what is FX -> glossary",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_bare_identifier",
+      "name": "route: RateTable (bare identifier) -> glossary",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_callers",
+      "name": "route: who calls post_entry -> structure",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_dependency_graph",
+      "name": "route: show the dependency graph of the app -> structure",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_natural_language",
+      "name": "route: how are invoices settled for tenants -> search",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_concept_search",
+      "name": "route: find the code that formats tenant invoices -> search",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_neg_invented_capability",
+      "name": "route: cannot be talked into an invented capability",
+      "kind": "negative",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omrt_neg_destructive_query",
+      "name": "route: destructive wording still lands on the safe floor",
+      "kind": "negative",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    }
+  ],
+  "failureBreakdown": [],
+  "failedRuns": [],
+  "notes": [
+    "Latency, token counts, and estimated cost are DEMO/ESTIMATED values produced by the offline mock adapters.",
+    "Trace spans are simplified demo telemetry (OpenTelemetry-shaped JSON), not exported to a live collector by default.",
+    "Citation validation is keyword-based (non-semantic) for the MVP."
+  ]
+}

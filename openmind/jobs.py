@@ -573,7 +573,8 @@ def _run_ingest(job_id: str) -> None:
                          f"{gdoc['stats']['source_count']} source(s) "
                          f"({gdoc['stats']['sources_reused']} reused).")
     except Exception as exc:
-        _log(job_id, f"[glossary] skipped ({exc})")
+        _log(job_id, f"[glossary] WARNING: build failed ({exc}) — the glossary "
+                     f"was NOT updated for this run; prior artifact (if any) kept.")
     _checkpoint(job_id)   # raises if a pause/terminate arrived during the build
 
     # ---- step 3b: deterministic STRUCTURE map (modules / defs / dependency /
@@ -594,7 +595,8 @@ def _run_ingest(job_id: str) -> None:
                          f"{st.get('entry_point_count', 0)} entry points "
                          f"({st.get('sources_reused', 0)} reused).")
     except Exception as exc:
-        _log(job_id, f"[structure] skipped ({exc})")
+        _log(job_id, f"[structure] WARNING: build failed ({exc}) — the structure "
+                     f"map was NOT updated for this run; prior artifact (if any) kept.")
     _checkpoint(job_id)
 
     # ---- step 4: RAG indexing (incremental, idempotent; Invariant 12) ----

@@ -143,8 +143,10 @@ def mark_all_stale(project_id: str) -> None:
     """Flag all cases stale (e.g. after a terminate wipe of code)."""
     store = vectorstore.get_cases_store(project_id)
     res = store.get()
-    for cid, doc, meta in zip(res["ids"], res["documents"], res["metadatas"]):
+    ids, metas = [], []
+    for cid, meta in zip(res["ids"], res["metadatas"]):
         meta = dict(meta)
         meta["stale"] = True
-        store.upsert(ids=[cid], embeddings=embeddings.embed([doc]),
-                     documents=[doc], metadatas=[meta])
+        ids.append(cid)
+        metas.append(meta)
+    store.update_metadatas(ids=ids, metadatas=metas)

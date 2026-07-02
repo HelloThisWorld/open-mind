@@ -1,0 +1,167 @@
+{
+  "generatedAt": "2026-07-02T14:53:13.673Z",
+  "skill": {
+    "name": "openmind-glossary",
+    "version": "1.0.0"
+  },
+  "model": {
+    "name": "openmind",
+    "type": "openmind-python-bridge"
+  },
+  "config": {
+    "runsPerCase": 10,
+    "threshold": 0.9,
+    "outputDir": "reports/openmind-glossary"
+  },
+  "totals": {
+    "testCases": 9,
+    "totalRuns": 90,
+    "passedRuns": 90,
+    "failedRuns": 0
+  },
+  "metrics": {
+    "totalRuns": 90,
+    "passedRuns": 90,
+    "failedRuns": 0,
+    "passRate": 1,
+    "schemaValidRate": 1,
+    "citationValidRate": 1,
+    "unsupportedClaimRate": 0,
+    "toolErrorRate": 0,
+    "retryCount": 0,
+    "latencyMsP50": 0,
+    "latencyMsP95": 1,
+    "latencyMsP99": 349,
+    "tokenInputTotal": 21440,
+    "tokenOutputTotal": 9630,
+    "estimatedCostUsd": 0.02517
+  },
+  "result": "PASSED",
+  "gateReasons": [],
+  "perCase": [
+    {
+      "id": "omgl_ledger",
+      "name": "define Ledger (glossary table term)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_posting",
+      "name": "glossary Posting (glossary table term)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_ratetable",
+      "name": "define RateTable (term that is also a code symbol)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_audittrail",
+      "name": "define AuditTrail (glossary table term)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_fx",
+      "name": "what is FX (definition-line acronym)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_sla",
+      "name": "what is SLA (definition-line acronym)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_stp",
+      "name": "define STP (README acronym expansion)",
+      "kind": "happy",
+      "expectedStatus": "answered",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_neg_blockchain",
+      "name": "define Blockchain (not in the corpus)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    },
+    {
+      "id": "omgl_neg_kubernetes",
+      "name": "what is Kubernetes (not in the corpus)",
+      "kind": "negative",
+      "expectedStatus": "insufficient_evidence",
+      "runs": 10,
+      "passed": 10,
+      "passRate": 1,
+      "citationValidRate": 1,
+      "failureCount": 0,
+      "minPassRate": 0.9,
+      "result": "PASSED"
+    }
+  ],
+  "failureBreakdown": [],
+  "failedRuns": [],
+  "notes": [
+    "Latency, token counts, and estimated cost are DEMO/ESTIMATED values produced by the offline mock adapters.",
+    "Trace spans are simplified demo telemetry (OpenTelemetry-shaped JSON), not exported to a live collector by default.",
+    "Citation validation is keyword-based (non-semantic) for the MVP."
+  ]
+}
