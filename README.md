@@ -30,6 +30,11 @@ builds durable artifacts from the code itself. The model, editor, or agent then
 queries those artifacts. If the repository does not support a claim, Open Mind
 prefers a precise "not found" over a plausible hallucination.
 
+Related projects:
+- [Open Mind](https://github.com/HelloThisWorld/open-mind): generates source-traceable codebase artifacts
+- [open-mind-mcp-server](https://github.com/HelloThisWorld/open-mind-mcp-server): exposes those artifacts as MCP tools for agents
+- [agent-skill-verification-template](https://github.com/HelloThisWorld/agent-skill-verification-template): tests agent skills/tools with evals, metrics, traces, and replay artifacts
+
 ## Actual Project Demo
 
 Screenshots below are captured from the running Open Mind UI against an indexed
