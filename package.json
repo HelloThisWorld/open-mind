@@ -1,0 +1,12 @@
+{
+  "name": "open-mind",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Task-runner shims for Open Mind (a Python project). Each script delegates to the Python implementation so the documented cross-repo commands work verbatim; Node.js is never required to use Open Mind itself.",
+  "scripts": {
+    "analyze": "python -m openmind.artifacts",
+    "build": "python -m compileall -q openmind",
+    "test": "python tests/verify_artifacts.py",
+    "clean": "python -c \"import shutil; shutil.rmtree('.openmind', ignore_errors=True)\""
+  }
+}

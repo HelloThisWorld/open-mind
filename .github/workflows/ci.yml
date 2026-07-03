@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  artifact-contract:
+    name: Build, test, and verify the artifact contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The artifact export path is dependency-free by design: it must run with
+      # a bare Python install (no FastAPI / vector / LLM stack).
+      - name: Build (byte-compile the package)
+        run: python -m compileall -q openmind
+
+      - name: Test (artifact contract acceptance checks)
+        run: python tests/verify_artifacts.py
+
+      - name: Run artifact generation against the sample repo
+        run: python -m openmind.artifacts --repo ./fixtures/sample-repo --output ./.openmind
+
+      - name: Verify .openmind/manifest.json exists
+        run: test -f .openmind/manifest.json
+
+      - name: Verify determinism-friendly extractor checks
+        run: |
+          python tests/verify_glossary.py
+          python tests/verify_structure.py

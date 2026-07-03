@@ -10,6 +10,12 @@ data_*/
 # Local corpus checkout (the demo clones Apache Kafka here)
 corpus/
 
+# Generated artifact exports (integration contract output; see openmind/artifacts.py)
+.openmind/
+
+# Node task-runner shims (package.json only wraps Python commands)
+node_modules/
+
 # Python
 __pycache__/
 *.pyc

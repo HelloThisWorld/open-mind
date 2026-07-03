@@ -81,6 +81,7 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 | **Grounded Ask context** | Assembles numbered sources from glossary hits, retrieved code, solved cases, prior conversation context, and user attachments for a local model to answer from. |
 | **Saved solved cases** | Lets useful Ask exchanges become searchable cases; referenced files are hash-checked later and flagged stale if code changes. |
 | **Agent tool surface** | Exposes core query, routing, case, and constrained fix tools through an MCP stdio server. |
+| **Portable artifact export** | Exports a versioned `.openmind` directory (manifest + glossary, architecture, flows, source index — all with `file:line` evidence) as the stable contract for external consumers such as the companion MCP server. |
 | **Test-gated codemod path** | Provides a narrow literal find/replace path: preview a diff, require a green baseline, apply, rerun tests, and revert on red. |
 
 What this is **not**: a full compiler, type checker, IDE extension, or free-form
@@ -310,6 +311,58 @@ Implemented MCP tools:
 
 ---
 
+## Using Open Mind With MCP-Compatible Agents
+
+Open Mind is standalone: everything above runs without any other project. For
+agent integrations there is additionally a **stable artifact contract** — Open
+Mind exports its knowledge as a versioned `.openmind` directory, and the
+companion [open-mind-mcp-server](https://github.com/HelloThisWorld/open-mind-mcp-server)
+loads that directory and exposes it as MCP tools (search, symbol evidence,
+architecture explanations, claim validation):
+
+```
+Source Code Repository
+  -> Open Mind                       (this repo; analysis, standalone)
+  -> .openmind artifacts             (manifest.json + schema 1.0.0)
+  -> open-mind-mcp-server            (optional integration layer)
+  -> Claude / Cursor / AI agents     (MCP tools, structured JSON, file:line evidence)
+```
+
+The integration boundary is deliberately narrow: **`manifest.json` plus the
+versioned artifact schema**. Open Mind never imports or starts the MCP server;
+the MCP server never imports Open Mind's internals or re-runs its analysis.
+Either project works without the other — the MCP server ships sample
+artifacts, and Open Mind's artifacts are plain JSON any consumer can read.
+
+Generate artifacts (deterministic, offline, no LLM and no extra dependencies —
+the export path runs on a bare Python install):
+
+```bash
+python -m openmind.artifacts --repo ./fixtures/sample-repo --output ./.openmind
+# or via the npm task-runner shim, equivalently:
+npm run analyze -- --repo ./fixtures/sample-repo --output ./.openmind
+```
+
+Then expose them to agents:
+
+```bash
+cd ../open-mind-mcp-server
+npm install
+npm run demo -- --artifacts ../open-mind/.openmind
+```
+
+The `.openmind` directory contains `manifest.json`, `metadata.json`,
+`glossary.json`, `architecture.json`, `flows.json`, and `source-index.json`.
+Every entry carries `{file, line, snippet}` evidence with repo-relative paths
+and a `high`/`medium`/`low` confidence; verbatim glossary extraction is
+`high`, heuristic projections (directory modules, name-based call flows) are
+`medium` or lower. Point `--repo` at any local repository to export artifacts
+for your own codebase. The contract is verified by
+`python tests/verify_artifacts.py` (schema, evidence validity against the
+analyzed repo, and byte-identical determinism).
+
+---
+
 ## Capabilities As Skills
 
 The tracked repository documents core capabilities as `SKILL.md` contracts:
@@ -434,6 +487,7 @@ openmind/
   cases.py         saved solved cases and staleness checks
   router.py        deterministic capability routing plus optional model refine
   codemod.py       preview/apply literal edits with test gating
+  artifacts.py     .openmind artifact export (the stable integration contract)
   mcp_server.py    MCP stdio server
   skill_bridge.py  JSON-lines bridge exposing the skills to the eval harness
   main.py          FastAPI REST/SSE API and single-page UI
@@ -510,6 +564,7 @@ results and reproduction steps.
 contracts implemented in this build:
 
 ```bash
+python tests/verify_artifacts.py      # .openmind artifact contract: schema, evidence, determinism
 python tests/verify_glossary.py       # verbatim extraction, provenance, honest miss
 python tests/verify_structure.py      # detection, structure map, incremental reuse
 python tests/verify_diagrams.py       # Mermaid/DOT projections and honest empty graphs
