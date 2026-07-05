@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from . import (ask as askmod, cases, config, conversation, db, diagrams,
                docs as docsmod, embeddings, fs_tree, glossary, jobs, llm_client,
                machine, mapio, models, netguard, rag, router, scope, structure,
-               sysload, vectorstore, walker)
+               sysload, templates, vectorstore, walker)
 from .model_server import server as model_server
 
 
@@ -40,8 +40,9 @@ def _warm_vectorstore() -> None:
         if orphans:
             print(f"[startup] dropped {len(orphans)} orphaned vector collection(s): "
                   f"{', '.join(orphans)}", flush=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[startup] vectorstore warm-up failed (first use will retry lazily): {exc}",
+              flush=True)
 
 
 @asynccontextmanager
@@ -152,6 +153,46 @@ def save_selection(project_id: str, req: models.SaveSelectionReq) -> Dict[str, A
 def remove_path(project_id: str, path: str) -> Dict[str, Any]:
     db.remove_project_path(project_id, path)
     return db.get_project(project_id)
+
+
+@app.get("/templates")
+def list_templates() -> Dict[str, Any]:
+    """Available template profiles: built-ins plus user files dropped into
+    <data dir>/templates (same name -> the user file wins). Invalid files are
+    listed WITH their validation errors instead of silently disappearing."""
+    return {"templates": templates.list_templates(),
+            "user_dir": str(config.USER_TEMPLATES_DIR)}
+
+
+@app.get("/projects/{project_id}/template")
+def get_project_template(project_id: str) -> Dict[str, Any]:
+    """This project's template selection: the user override, the auto-selection
+    recorded at learn time, and which one is effective."""
+    p = db.get_project(project_id)
+    if not p:
+        raise HTTPException(404, "project not found")
+    return templates.selection_info(p)
+
+
+@app.post("/projects/{project_id}/template")
+def set_project_template(project_id: str, req: models.SetTemplateReq) -> Dict[str, Any]:
+    """Set (or clear, with name=null) the project's template override. The name
+    must resolve to a valid template at write time — a typo fails HERE, not
+    silently at the next learn."""
+    p = db.get_project(project_id)
+    if not p:
+        raise HTTPException(404, "project not found")
+    name = (req.name or "").strip().lower()
+    meta = dict(p.get("meta") or {})
+    if name:
+        if not templates.get_template(name):
+            raise HTTPException(400, f"unknown or invalid template: {name!r} "
+                                     "(GET /templates lists what is available)")
+        meta["template"] = name
+    else:
+        meta.pop("template", None)
+    db.update_project_meta(project_id, meta)
+    return templates.selection_info(db.get_project(project_id))
 
 
 @app.post("/projects/{project_id}/source-link")
@@ -696,8 +737,13 @@ def search(req: models.SearchReq) -> Dict[str, Any]:
 async def ocr(file: UploadFile = File(...)) -> Dict[str, Any]:
     """Local OCR for an image attachment (tesseract; graceful if unavailable).
     The raw image is never sent to the model — only any extracted text."""
-    data = await file.read()
-    return askmod.ocr_image(data, file.filename or "image")
+    buf = bytearray()
+    while chunk := await file.read(1 << 20):
+        buf += chunk
+        if len(buf) > config.OCR_MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "image too large (limit "
+                                     f"{config.OCR_MAX_UPLOAD_BYTES // 1_000_000} MB)")
+    return askmod.ocr_image(bytes(buf), file.filename or "image")
 
 
 @app.post("/ask")

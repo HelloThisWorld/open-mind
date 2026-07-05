@@ -404,8 +404,8 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
             for f in d.glob("*"):
                 try:
                     f.unlink()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"[terminate] could not delete {f}: {exc}", flush=True)
     # 3) clear per-file hashes (forces a full re-embed on the next learn). KEEP the
     # path selection: a Terminate wipes LEARNED DATA but should leave the project
     # ready to re-learn in one click — clearing the repo paths here would make
@@ -436,14 +436,18 @@ def _cleanup_deleted(project_id: str) -> None:
                       vectorstore.get_cases_store(project_id)):
             try:
                 store.drop()                   # delete-only (no recreate)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[delete] vector collection drop failed for {project_id}: {exc}",
+                      flush=True)
         try:
             d = config.project_dir(project_id)
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
-        except Exception:
-            pass
+                if d.exists():
+                    print(f"[delete] data dir not fully removed for {project_id}: {d}",
+                          flush=True)
+        except Exception as exc:
+            print(f"[delete] data dir removal failed for {project_id}: {exc}", flush=True)
         db.delete_project(project_id)          # row finally disappears
     finally:
         with _deleting_lock:
@@ -517,6 +521,11 @@ def _run_ingest(job_id: str) -> None:
     for spec in specs:
         root = walker.norm(spec["path"])
         for f in walker.iter_files(root, spec.get("exclude", [])):
+            if f in file_meta:
+                # overlapping path selections (e.g. a root and its subfolder):
+                # index each file ONCE — duplicates in one embed batch would
+                # collide on identical chunk ids. First selection wins.
+                continue
             repo = walker.find_repo_root(f, root)
             svc = walker.service_name(repo)
             current_files.append(f)
@@ -552,6 +561,31 @@ def _run_ingest(job_id: str) -> None:
             _progress(job_id, analyzed=i + 1)
             _checkpoint(job_id)
             resources.guard_or_abort(lambda m: _log(job_id, m))  # keep RAM headroom
+
+    # ---- template auto-selection (recorded for later consumers, not yet applied) ----
+    # Deterministic stack detection scores the available template profiles; the
+    # winner (if any) is RECORDED in project meta as template_auto together with
+    # its score. A user override (meta["template"]) always wins at resolve time
+    # (openmind.templates.resolve_for_project). Guarded end to end: template
+    # selection must never be able to break a learn.
+    try:
+        from . import detect as detectmod, templates as templatesmod
+        detection = detectmod.detect(
+            [(rel_of(f), cache_text[f]) for f in current_files])
+        sel = templatesmod.auto_select(detection, current_set)
+        new_auto = (sel or {}).get("name")
+        p = db.get_project(project_id) or {}
+        meta = dict(p.get("meta") or {})
+        if (meta.get("template_auto") != new_auto
+                or meta.get("template_auto_score") != (sel or {}).get("score")):
+            meta["template_auto"] = new_auto
+            meta["template_auto_score"] = (sel or {}).get("score")
+            db.update_project_meta(project_id, meta)
+        if new_auto:
+            _log(job_id, f"[templates] auto-selected profile '{new_auto}' "
+                         f"(score {sel['score']}); a project override wins if set.")
+    except Exception as exc:
+        _log(job_id, f"[templates] auto-selection skipped: {exc}")
 
     # ---- step 3: deterministic glossary (term/acronym -> VERBATIM definition) ----
     # The primary build-time artifact: term definitions are extracted ONCE here
