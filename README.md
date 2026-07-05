@@ -80,13 +80,14 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 | Artifact | Implemented behavior |
 |---|---|
 | **Source-traceable knowledge index** | Stores repo-relative paths, content hashes, source locations, file metadata, and search chunks. |
-| **Verbatim glossary** | Extracts terms/acronyms from glossary files, docs, README text, definition tables, and comments; definitions are copied verbatim and carry `source_file`, `line_number`, and `content_hash`. |
+| **Verbatim glossary** | Extracts terms/acronyms from definition tables, definition lines, acronym expansions, and code comments; definitions are copied verbatim and carry `source_file`, `line_number`, and `content_hash`. The interactive learn path scans code/config sources; the `.openmind` export walk additionally scans README/docs/GLOSSARY files (primary definition sources). |
 | **Structure and graph map** | Builds a module tree, per-file definition index, import/dependency graph, entry points, and a name-based call/usage graph. Ambiguous call edges are flagged instead of guessed. |
 | **Exact-token + hybrid search** | Bare identifiers use token-boundary matching; natural-language queries use vector + lexical retrieval. |
 | **Grounded Ask context** | Assembles numbered sources from glossary hits, retrieved code, solved cases, prior conversation context, and user attachments for a local model to answer from. |
 | **Saved solved cases** | Lets useful Ask exchanges become searchable cases; referenced files are hash-checked later and flagged stale if code changes. |
 | **Agent tool surface** | Exposes core query, routing, case, and constrained fix tools through an MCP stdio server. |
 | **Portable artifact export** | Exports a versioned `.openmind` directory (manifest + glossary, architecture, flows, source index — all with `file:line` evidence) as the stable contract for external consumers such as the companion MCP server. |
+| **Template profiles (selection layer)** | Declarative YAML/JSON "lens" files describing a stack (built-ins ship in `openmind/templates/`; drop your own into `<data dir>/templates/` — same schema, user files win by name). A schema gate lists invalid files with their errors; deterministic stack detection scores profiles at learn time and records the winner per project with the evidence it matched on (`GET /templates`, `GET/POST /projects/{id}/template`). Selection does not yet shape learned output — that is roadmap. |
 | **Test-gated codemod path** | Provides a narrow literal find/replace path: preview a diff, require a green baseline, apply, rerun tests, and revert on red. |
 
 What this is **not**: a full compiler, type checker, IDE extension, or free-form
@@ -480,6 +481,8 @@ openmind/
   walker.py        selection-aware walk, .gitignore handling, hashing
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
+  templates.py     declarative template profiles: schema gate + deterministic
+                   stack-match auto-selection (selection layer only for now)
   structure.py     deterministic modules, definitions, imports, calls, entries
   diagrams.py      Mermaid/DOT/interactive graph projections
   glossary.py      verbatim glossary extraction and lookup
@@ -576,10 +579,18 @@ python tests/verify_diagrams.py       # Mermaid/DOT projections and honest empty
 python tests/verify_router.py         # deterministic routing and model fallback validation
 python tests/verify_source_link.py    # source-link parsing and audited egress policy
 python tests/verify_resources.py      # ingest RAM guard behavior
+python tests/verify_templates.py      # template profiles: schema gate, deterministic selection
+python tests/verify_grounding.py      # glossary-first Ask routing, honest miss/empty sources
+python tests/verify.py                # 12 cross-cutting design invariants end to end
 ```
 
 These are intentionally small acceptance scripts rather than a hidden benchmark
-suite; each one maps to a concrete reliability claim in this README.
+suite; each one maps to a concrete reliability claim in this README. The
+remaining `tests/verify_*.py` files are regression suites (Ask flows, model
+server, async delete, specific fix batches). Run each script with an isolated
+`OPENMIND_DATA_DIR` (plus `OPENMIND_EMBED_OFFLINE=1` for deterministic offline
+embeddings); under that setup the whole `tests/` directory passes on a fresh
+clone against the neutral fixture repos in `fixtures/`.
 
 ---
 
@@ -596,7 +607,10 @@ The following are not claimed as complete in the current build:
 - broader tree-sitter parsers beyond Java;
 - graph-specific MCP tools for node expansion and graph navigation;
 - a first-class repository memory layer beyond retained Ask history and saved
-  solved cases.
+  solved cases;
+- template-profile output shaping on top of the implemented selection layer:
+  framework-aware extraction facets (e.g. route paths, topic names), role-aware
+  architecture/flow projections, and template-driven guided learning docs.
 
 ---
 

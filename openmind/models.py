@@ -23,6 +23,12 @@ class SaveSelectionReq(BaseModel):
     exclude: List[str] = Field(default_factory=list)
 
 
+class SetTemplateReq(BaseModel):
+    """Set or clear a project's template-profile override. name=None (or "")
+    clears the override so the recorded auto-selection applies again."""
+    name: Optional[str] = None
+
+
 class SourceLinkReq(BaseModel):
     """Link a project to its source when no local copy resolves: either a local
     folder (becomes the machine-local source root) or a GitHub repo (fetched on

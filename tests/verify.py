@@ -7,7 +7,7 @@ import os, sys, time, json, shutil, threading, http.server, socketserver
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIX = os.path.join(ROOT, "testrepos").replace("\\", "/")
+FIX = os.path.join(ROOT, "fixtures", "testrepos").replace("\\", "/")
 results = []
 def check(name, cond, detail=""):
     results.append((name, bool(cond), detail))
@@ -39,7 +39,7 @@ with TestClient(app) as c:
         blocked = True
     netguard.assert_local("http://127.0.0.1:7080/v1/chat", "POST")  # allowed
     # source scan: only netguard.py may import httpx
-    appdir = os.path.join(ROOT, "app")
+    appdir = os.path.join(ROOT, "openmind")
     offenders = []
     for f in os.listdir(appdir):
         if f.endswith(".py") and f != "netguard.py":
@@ -103,11 +103,13 @@ with TestClient(app) as c:
     pa = c.get(f"/projects/{A}").json()
     mapdir = os.path.join(os.environ["OPENMIND_DATA_DIR"], A, "map")
     leftover = os.listdir(mapdir) if os.path.exists(mapdir) else []
-    check("Invariant 5 terminate wipes to init (0 chunks/files/paths, map empty, state init)",
+    check("Invariant 5 terminate wipes learned data to init (0 chunks/files, map empty, state init)",
           pa["state"]=="init" and pa["code_chunks"]==0 and pa["files_indexed"]==0
-          and len(pa["paths"])==0 and not leftover)
-    # re-learn from zero works
-    c.post(f"/projects/{A}/paths", json={"path":FIX,"exclude":[]}); ingest_wait(c, A)
+          and not leftover)
+    # terminate KEEPS the path selection so re-learn works in one click
+    check("Invariant 5 terminate keeps the path selection (ready to re-learn)",
+          len(pa["paths"]) >= 1)
+    ingest_wait(c, A)
     check("Invariant 5 re-learn after terminate starts from zero", vectorstore.get_code_store(A).count() > 0)
 
     # ============== Invariant 6: jobs persistent / interrupted-resumable ==============
@@ -127,8 +129,10 @@ with TestClient(app) as c:
     # (The join-group / query-time-union half of this invariant was removed with
     # the JOIN GROUPS feature; per-project physical isolation still holds.)
     B = c.post("/projects", json={"name":"B","path":FIX+"/payment-service","exclude":[]}).json()["id"]
-    # make A only order-service so A and B are disjoint
+    # make A only order-service so A and B are disjoint (terminate keeps paths,
+    # so drop the old root before pointing A at the subtree)
     c.post(f"/projects/{A}/terminate", json={"clear_cases":True})
+    c.delete(f"/projects/{A}/paths", params={"path": FIX})
     c.post(f"/projects/{A}/paths", json={"path":FIX+"/order-service","exclude":[]}); ingest_wait(c, A)
     ingest_wait(c, B)
     sa = c.post("/search", json={"scope":A,"query":"PaymentPublisher KafkaTemplate","k":10}).json()

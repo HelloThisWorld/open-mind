@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from openmind.main import app
 from openmind import vectorstore, config
 
-FE=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"testrepos_fe").replace("\\","/")
+FE=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"fixtures","testrepos-fe").replace("\\","/")
 def wait_idle(c,n=200):
     for _ in range(n):
         if not [x for x in c.get("/jobs").json()["jobs"] if x["status"] in ("queued","running")]: return
@@ -40,7 +40,11 @@ with TestClient(app) as c:
     in_list = any(p["id"]==fe for p in c.get("/projects").json()["projects"])
     datadir = os.path.join(os.environ["OPENMIND_DATA_DIR"], fe)
     check("Fix1 DELETE removes project from registry", gone and not in_list)
-    check("Fix1 DELETE removes project data dir", not os.path.exists(datadir))
+    # DELETE returns immediately; storage is reclaimed in the background — wait (bounded)
+    for _ in range(100):
+        if not os.path.exists(datadir): break
+        time.sleep(0.3)
+    check("Fix1 DELETE removes project data dir (background cleanup)", not os.path.exists(datadir))
     check("Fix1 DELETE drops code collection (count 0)", vectorstore.get_store(coll).count()==0)
 
     # ---- Fix 5: pick-folder endpoint responds gracefully (path or error, never 500)

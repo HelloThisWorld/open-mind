@@ -7,7 +7,7 @@ from openmind.main import app
 from openmind import ask, llm_client
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPO = os.path.join(ROOT, "testrepos").replace("\\", "/")
+REPO = os.path.join(ROOT, "fixtures", "testrepos").replace("\\", "/")
 results = []
 def check(n, c, d=""):
     results.append((n, bool(c))); print(("PASS " if c else "FAIL ")+n+(("  -- "+d) if d else ""))

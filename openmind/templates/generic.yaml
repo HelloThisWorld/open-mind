@@ -1,0 +1,52 @@
+# Open Mind template profile — schema 1.0.0
+#
+# A template profile is a declarative "lens" for a repository: how to match a
+# stack, which logical roles files play, which extra deterministic facts to
+# capture, and how a guided learning doc should be organised. Copy this file to
+# <data dir>/templates/<your-name>.yaml to author your own (user files override
+# built-ins by name). Templates are data, never code: everything they produce
+# must stay deterministic and carry file:line evidence — a pattern that matches
+# nothing yields an honest empty section, never invented content.
+#
+# This 'generic' profile is the neutral baseline: its match section is empty so
+# it is NEVER auto-selected, and selecting it changes nothing — it exists as
+# the annotated authoring example.
+
+schemaVersion: "1.0.0"
+name: generic
+title: Generic (no framework lens)
+description: Neutral baseline — behaves exactly like having no template selected.
+
+# match — how auto-selection scores this profile against the learned repo.
+# Scoring: each matched dependency pattern +3, primary language +2 (other
+# listed language +1), each matched marker-file glob +2. The profile is
+# auto-selected only when its total reaches min_score (default 3, so one
+# dependency cue alone is enough; language or markers alone are not).
+match:
+  dependencies: []      # substring match against manifest dependencies,
+                        # e.g. [spring-boot-starter, spring-webmvc]
+  languages: []         # detected language names, e.g. [Java, Kotlin]
+  marker_files: []      # repo-relative globs, e.g. ["src/main/resources/application*.yml"]
+  # min_score: 3        # optional override of the auto-selection floor
+
+# ---------------------------------------------------------------------------
+# Reserved sections — validated for shape today, consumed by later phases.
+# Authoring them now is safe; they simply have no effect until the consuming
+# phase ships.
+# ---------------------------------------------------------------------------
+
+# roles — classify files/classes into logical layers (e.g. controller, service,
+# repository, entity, rule, workflow) via path globs / annotation / name
+# patterns, so architecture output can speak the framework's language instead
+# of raw directories.
+roles: []
+
+# facets — extra deterministic extraction patterns with capture groups (e.g.
+# HTTP route paths from @GetMapping("..."), topic names from send("...")).
+# Every captured fact will carry file:line evidence.
+facets: []
+
+# guide — the outline of a generated learning document; each section is a
+# query over the learned artifacts (entry points, flows by role, glossary...),
+# rendered deterministically with honest "not found" for empty sections.
+guide: []

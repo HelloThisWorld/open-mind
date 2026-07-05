@@ -181,6 +181,14 @@ BINARY_EXTENSIONS = {
 
 MAX_FILE_BYTES = 2_000_000  # skip files larger than this
 
+OCR_MAX_UPLOAD_BYTES = 50_000_000  # /ocr rejects larger image uploads (413) instead of buffering them
+
+# Template profiles (declarative framework/architecture lenses; see openmind.templates).
+# Built-ins ship with the package; users drop their own .yaml/.json into the
+# data-dir folder — same schema, user files override built-ins by name.
+BUILTIN_TEMPLATES_DIR = APP_DIR / "templates"
+USER_TEMPLATES_DIR = DATA_DIR / "templates"
+
 # RAG
 EMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"  # fastembed; hashing fallback if unavailable
 EMBED_DIM = 384

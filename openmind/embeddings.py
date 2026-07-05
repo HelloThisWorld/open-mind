@@ -114,10 +114,14 @@ class _FastEmbedBackend:
         try:
             self._m = (TextEmbedding(model_name=config.EMBED_MODEL_NAME, providers=providers)
                        if providers else TextEmbedding(model_name=config.EMBED_MODEL_NAME))
-        except Exception:
+        except Exception as exc:
             # older fastembed without a `providers` kwarg, or a GPU provider that
             # fails to initialise — fall back to the library default (CPU) so
             # embeddings ALWAYS work rather than breaking the whole ingest.
+            if providers:
+                import sys
+                print(f"[embeddings] GPU provider init failed ({exc}); falling back "
+                      "to CPU embeddings.", file=sys.stderr)
             self._m = TextEmbedding(model_name=config.EMBED_MODEL_NAME)
             providers = None
         self.providers = providers
