@@ -1,0 +1,67 @@
+# Open Mind template profile — Spring Boot lens (schema 1.1.0)
+#
+# Classifies files into the layers a Spring developer thinks in (controllers,
+# services, repositories, entities, configuration) and captures the framework
+# facts generic extraction cannot see: HTTP route paths and Kafka topic
+# literals. Everything stays deterministic and evidence-backed — a pattern
+# that matches nothing yields an honest empty section.
+
+schemaVersion: "1.1.0"
+name: spring-boot
+title: Spring Boot
+description: Layered Spring Boot lens — HTTP/service/persistence layers, route paths, Kafka topics.
+
+match:
+  dependencies: [spring-boot-starter, spring-webmvc, spring-context]
+  languages: [Java, Kotlin]
+  marker_files: ["*src/main/resources/application*"]
+
+roles:
+  - name: controller
+    title: Controllers (HTTP layer)
+    layer: 1
+    annotations: ['@RestController\b', '@Controller\b']
+    name_patterns: ["*Controller.java", "*Controller.kt"]
+  - name: service
+    title: Services (business layer)
+    layer: 2
+    annotations: ['@Service\b']
+    name_patterns: ["*Service.java", "*ServiceImpl.java", "*Service.kt"]
+  - name: repository
+    title: Repositories (persistence layer)
+    layer: 3
+    annotations: ['@Repository\b']
+    name_patterns: ["*Repository.java", "*Repository.kt", "*Dao.java"]
+  - name: entity
+    title: Entities (domain model)
+    layer: 4
+    annotations: ['@Entity\b', '@Document\b']
+  - name: config
+    title: Configuration
+    layer: 5
+    annotations: ['@Configuration\b', '@ConfigurationProperties\b']
+    path_globs: ["*src/main/resources/application*"]
+  - name: component
+    title: Components (other wired beans)
+    layer: 6
+    annotations: ['@Component\b']
+
+facets:
+  - name: http_route
+    title: HTTP route
+    pattern: '@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:value\s*=\s*)?"([^"]*)"'
+    captures: [method, path]
+    files: ["*.java", "*.kt"]
+  - name: request_mapping
+    title: Request-mapping base path
+    pattern: '@RequestMapping\s*\(\s*(?:value\s*=\s*)?"([^"]*)"'
+    captures: [path]
+    files: ["*.java", "*.kt"]
+  - name: kafka_topic
+    title: Kafka topic literal
+    pattern: '(?:kafkaTemplate\.send\s*\(|@KafkaListener\s*\(\s*topics\s*=\s*)"([^"]*)"'
+    captures: [topic]
+    files: ["*.java", "*.kt"]
+
+# guide is the guided-doc phase; not authored yet.
+guide: []

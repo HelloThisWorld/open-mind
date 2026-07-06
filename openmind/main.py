@@ -650,15 +650,33 @@ def _glossary_by_file(pids: List[str]) -> Dict[str, List[str]]:
     return out
 
 
+def _attach_roles(nodes: Optional[List[Dict[str, Any]]],
+                  roles: Dict[str, Dict[str, Any]]) -> None:
+    """Tag graph nodes with the template role of their file (node ids are the
+    repo-relative paths the facts map is keyed by). No template facts -> no-op,
+    nodes keep their pre-template shape."""
+    for n in nodes or []:
+        hit = roles.get(n.get("id") or "")
+        if hit:
+            n["role"] = hit.get("role")
+
+
 @app.get("/structure")
 def get_structure(scope_id: str = Query(..., alias="scope")) -> Dict[str, Any]:
     """Deterministic structure overview for the scope (archetype + stats + entry
     points + top modules). The basis of the Graphs view."""
-    doc = mapio.merged_structure(_scope_pids(scope_id))
+    pids = _scope_pids(scope_id)
+    doc = mapio.merged_structure(pids)
     ov = structure.overview(doc)
     ov["archetype"] = diagrams._archetype(doc)
     ov["generated_at"] = doc.get("generated_at")
     ov["has_data"] = bool(doc.get("files"))
+    fdoc = mapio.merged_facts(pids)
+    ov["template"] = None
+    if fdoc.get("template"):
+        ov["template"] = {"name": (fdoc["template"] or {}).get("name"),
+                          "layers": fdoc.get("role_defs") or [],
+                          "facets": fdoc.get("facets") or []}
     return ov
 
 
@@ -688,7 +706,9 @@ def get_graph(scope_id: str = Query(..., alias="scope"),
     /graph/children. All real names from the deterministic structure map."""
     pids = _scope_pids(scope_id)
     doc = mapio.merged_structure(pids)
-    return diagrams.call_roots(doc, gbyfile=_glossary_by_file(pids))
+    res = diagrams.call_roots(doc, gbyfile=_glossary_by_file(pids))
+    _attach_roles(res.get("roots"), mapio.merged_facts(pids).get("roles") or {})
+    return res
 
 
 @app.get("/graph/children")
@@ -697,8 +717,10 @@ def get_graph_children(scope_id: str = Query(..., alias="scope"),
     """Callees of one mind-map node, paginated (show `limit`, then '+more')."""
     pids = _scope_pids(scope_id)
     doc = mapio.merged_structure(pids)
-    return diagrams.call_children(doc, id, offset=offset, limit=limit,
-                                  gbyfile=_glossary_by_file(pids))
+    res = diagrams.call_children(doc, id, offset=offset, limit=limit,
+                                 gbyfile=_glossary_by_file(pids))
+    _attach_roles(res.get("children"), mapio.merged_facts(pids).get("roles") or {})
+    return res
 
 
 @app.get("/graph/node")
@@ -707,7 +729,15 @@ def get_graph_node(scope_id: str = Query(..., alias="scope"),
     """Detail for a clicked node: source location, defs, call neighbors, glossary."""
     pids = _scope_pids(scope_id)
     doc = mapio.merged_structure(pids)
-    return diagrams.node_detail(doc, id, gbyfile=_glossary_by_file(pids))
+    res = diagrams.node_detail(doc, id, gbyfile=_glossary_by_file(pids))
+    fdoc = mapio.merged_facts(pids)
+    hit = (fdoc.get("roles") or {}).get(id)
+    if hit:
+        res["role"] = hit          # {"role", "via", "line"} — the full evidence
+    facts = [f for f in (fdoc.get("facts") or []) if f.get("file") == id]
+    if facts:
+        res["facets"] = facts[:20]
+    return res
 
 
 # ---------------------------------------------------------------------------

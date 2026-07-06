@@ -2,9 +2,11 @@
 scope views over them. A scope resolves to one (or more) project ids; the
 readers union per project in memory, never physically merging data.
 
-The sole persisted map artifact is the deterministic glossary
-(``map/glossary.json``). Generic atomic file I/O is exposed so other
-deterministic artifacts can be added the same way."""
+Persisted map artifacts: the deterministic glossary (``map/glossary.json``),
+the structure map (``map/structure.json``), and the template facts
+(``map/template_facts.json``, present only while a template profile resolves).
+Generic atomic file I/O is exposed so other deterministic artifacts can be
+added the same way."""
 from __future__ import annotations
 
 import json
@@ -21,6 +23,8 @@ _EMPTY = {
                   "dependency_graph": {"edges": [], "external": []},
                   "call_graph": {"edges": []}, "module_graph": {"edges": []},
                   "source_hashes": {}, "stats": {}},
+    "template_facts": {"schemaVersion": "", "template": None, "roles": {},
+                       "role_defs": [], "facets": [], "facts": [], "stats": {}},
 }
 
 
@@ -53,6 +57,21 @@ def load_glossary(pid): return load_map(pid, "glossary.json")
 
 def save_structure(pid, d): save_map(pid, "structure.json", d)
 def load_structure(pid): return load_map(pid, "structure.json")
+
+
+def save_facts(pid, d): save_map(pid, "template_facts.json", d)
+def load_facts(pid): return load_map(pid, "template_facts.json")
+
+
+def delete_facts(project_id: str) -> None:
+    """Remove the template-facts map (a learn that resolves NO template must
+    not leave facts from a previously selected profile behind)."""
+    p = _path(project_id, "template_facts.json")
+    try:
+        if p.exists():
+            p.unlink()
+    except Exception as exc:
+        print(f"[mapio] could not delete {p}: {exc}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +121,17 @@ def merged_structure(project_ids: List[str]) -> Dict[str, Any]:
         docs[0]["root"] = ""
         return docs[0]
     return load_map("", "structure.json")
+
+
+def merged_facts(project_ids: List[str]) -> Dict[str, Any]:
+    """Template facts for the scope. Like a structure map, facts are rooted at
+    one repo, so the first project (in scope order) with a resolved template
+    wins — mirroring merged_structure's first-with-content rule."""
+    for pid in project_ids:
+        d = load_facts(pid)
+        if d.get("template"):
+            return d
+    return json.loads(json.dumps(_EMPTY["template_facts"]))
 
 
 def structure_sources(project_ids: List[str]) -> set:

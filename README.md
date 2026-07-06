@@ -87,7 +87,7 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 | **Saved solved cases** | Lets useful Ask exchanges become searchable cases; referenced files are hash-checked later and flagged stale if code changes. |
 | **Agent tool surface** | Exposes core query, routing, case, and constrained fix tools through an MCP stdio server. |
 | **Portable artifact export** | Exports a versioned `.openmind` directory (manifest + glossary, architecture, flows, source index — all with `file:line` evidence) as the stable contract for external consumers such as the companion MCP server. |
-| **Template profiles (selection layer)** | Declarative YAML/JSON "lens" files describing a stack (built-ins ship in `openmind/templates/`; drop your own into `<data dir>/templates/` — same schema, user files win by name). A schema gate lists invalid files with their errors; deterministic stack detection scores profiles at learn time and records the winner per project with the evidence it matched on (`GET /templates`, `GET/POST /projects/{id}/template`). Selection does not yet shape learned output — that is roadmap. |
+| **Template profiles** | Declarative YAML/JSON "lens" files describing a stack (built-ins `generic` + `spring-boot` ship in `openmind/templates/`; drop your own into `<data dir>/templates/` — same schema, user files win by name). A schema gate lists invalid files with their errors; deterministic stack detection scores profiles at learn time and records the winner per project with the evidence it matched on (`GET /templates`, `GET/POST /projects/{id}/template`). The resolved profile then classifies files into logical **roles** (controller/service/repository/…) and captures **facets** — verbatim regex facts such as HTTP route paths or Kafka topic literals, each with `file:line:snippet` evidence — persisted at learn time, surfaced through `/structure` (layer summary) and `/graph` (per-node role + facts), and projected into the `.openmind` export. No template resolved -> behavior and output are unchanged. |
 | **Test-gated codemod path** | Provides a narrow literal find/replace path: preview a diff, require a green baseline, apply, rerun tests, and revert on red. |
 
 What this is **not**: a full compiler, type checker, IDE extension, or free-form
@@ -329,7 +329,7 @@ architecture explanations, claim validation):
 ```
 Source Code Repository
   -> Open Mind                       (this repo; analysis, standalone)
-  -> .openmind artifacts             (manifest.json + schema 1.0.0)
+  -> .openmind artifacts             (manifest.json + schema 1.1.0)
   -> open-mind-mcp-server            (optional integration layer)
   -> Claude / Cursor / AI agents     (MCP tools, structured JSON, file:line evidence)
 ```
@@ -341,7 +341,8 @@ Either project works without the other — the MCP server ships sample
 artifacts, and Open Mind's artifacts are plain JSON any consumer can read.
 
 Generate artifacts (deterministic, offline, no LLM and no extra dependencies —
-the export path runs on a bare Python install):
+the export path runs on a bare Python install; PyYAML is optional and only
+gates YAML template profiles, which degrade to "no template applied"):
 
 ```bash
 python -m openmind.artifacts --repo ./fixtures/sample-repo --output ./.openmind
@@ -366,6 +367,14 @@ and a `high`/`medium`/`low` confidence; verbatim glossary extraction is
 for your own codebase. The contract is verified by
 `python tests/verify_artifacts.py` (schema, evidence validity against the
 analyzed repo, and byte-identical determinism).
+
+Schema 1.1.0 is additive: when a template profile applies (deterministic
+auto-selection, or `--template NAME`; `--no-template` opts out entirely),
+`metadata.template` records it, `architecture.json` gains role-classified
+`layers` (with evidence) and per-component `roles` counts, and flows are named
+from verbatim facet captures (e.g. `HTTP route: Post /orders`). Without a
+template the extra keys are absent and the output keeps the 1.0.0 shape —
+consumers accepting `1.x` keep working either way.
 
 ---
 
@@ -482,7 +491,9 @@ openmind/
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
   templates.py     declarative template profiles: schema gate + deterministic
-                   stack-match auto-selection (selection layer only for now)
+                   stack-match auto-selection
+  facets.py        template facet extraction: role classification + verbatim
+                   capture facts, all with file:line evidence
   structure.py     deterministic modules, definitions, imports, calls, entries
   diagrams.py      Mermaid/DOT/interactive graph projections
   glossary.py      verbatim glossary extraction and lookup
@@ -580,6 +591,7 @@ python tests/verify_router.py         # deterministic routing and model fallback
 python tests/verify_source_link.py    # source-link parsing and audited egress policy
 python tests/verify_resources.py      # ingest RAM guard behavior
 python tests/verify_templates.py      # template profiles: schema gate, deterministic selection
+python tests/verify_facets.py         # template facets: roles, captures, projections, honest empties
 python tests/verify_grounding.py      # glossary-first Ask routing, honest miss/empty sources
 python tests/verify.py                # 12 cross-cutting design invariants end to end
 ```
@@ -608,9 +620,9 @@ The following are not claimed as complete in the current build:
 - graph-specific MCP tools for node expansion and graph navigation;
 - a first-class repository memory layer beyond retained Ask history and saved
   solved cases;
-- template-profile output shaping on top of the implemented selection layer:
-  framework-aware extraction facets (e.g. route paths, topic names), role-aware
-  architecture/flow projections, and template-driven guided learning docs.
+- template-driven guided learning docs (the `guide` template section is
+  reserved but not yet rendered) and more built-in profiles beyond
+  `spring-boot` (Rails, Django, Express/NestJS).
 
 ---
 
