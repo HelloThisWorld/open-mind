@@ -87,7 +87,8 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 | **Saved solved cases** | Lets useful Ask exchanges become searchable cases; referenced files are hash-checked later and flagged stale if code changes. |
 | **Agent tool surface** | Exposes core query, routing, case, and constrained fix tools through an MCP stdio server. |
 | **Portable artifact export** | Exports a versioned `.openmind` directory (manifest + glossary, architecture, flows, source index — all with `file:line` evidence) as the stable contract for external consumers such as the companion MCP server. |
-| **Template profiles** | Declarative YAML/JSON "lens" files describing a stack (built-ins `generic` + `spring-boot` ship in `openmind/templates/`; drop your own into `<data dir>/templates/` — same schema, user files win by name). A schema gate lists invalid files with their errors; deterministic stack detection scores profiles at learn time and records the winner per project with the evidence it matched on (`GET /templates`, `GET/POST /projects/{id}/template`). The resolved profile then classifies files into logical **roles** (controller/service/repository/…) and captures **facets** — verbatim regex facts such as HTTP route paths or Kafka topic literals, each with `file:line:snippet` evidence — persisted at learn time, surfaced through `/structure` (layer summary) and `/graph` (per-node role + facts), and projected into the `.openmind` export. No template resolved -> behavior and output are unchanged. |
+| **Template profiles** | Declarative YAML/JSON "lens" files describing a stack (built-ins `generic`, `spring-boot`, `rails`, `django`, `express-nestjs` ship in `openmind/templates/`; drop your own into `<data dir>/templates/` — same schema, user files win by name). A schema gate lists invalid files with their errors; deterministic stack detection scores profiles at learn time and records the winner per project with the evidence it matched on (`GET /templates`, `GET/POST /projects/{id}/template`). The resolved profile then classifies files into logical **roles** (controller/service/repository/…) and captures **facets** — verbatim regex facts such as HTTP route paths or Kafka topic literals, each with `file:line:snippet` evidence — persisted at learn time, surfaced through `/structure` (layer summary) and `/graph` (per-node role + facts), and projected into the `.openmind` export. No template resolved -> behavior and output are unchanged. |
+| **Template learning guide** | Renders the resolved profile's `guide` outline into markdown pages after every learn (`GET /docs`, `GET /docs/{page}`, MCP `get_doc`; regenerate via `POST /gendocs`). Each section is one deterministic query over the learned maps (overview / layers / entry points / flows / facets / glossary / modules); every fact cites `file:line`, empty sections say so honestly, regeneration is byte-identical, and an `OPENMIND:NOTES` block per page preserves human annotations across rebuilds. No guide -> the docs surface stays an honest empty shell. |
 | **Test-gated codemod path** | Provides a narrow literal find/replace path: preview a diff, require a green baseline, apply, rerun tests, and revert on red. |
 
 What this is **not**: a full compiler, type checker, IDE extension, or free-form
@@ -311,7 +312,7 @@ Implemented MCP tools:
 | `dispatch` | Route a query and invoke the chosen capability. |
 | `find_similar_cases` | Search saved solved cases, with staleness flags. |
 | `save_case` | Save a problem/resolution as a reusable case. |
-| `get_doc` | Stable documentation endpoint surface; generated docs are currently not produced in this build. |
+| `get_doc` | A generated learning-guide page (template `guide` sections; deterministic, `file:line`-cited), or an honest miss when no template guide applies. |
 | `propose_fix` | Preview a literal find/replace as a unified diff. |
 | `apply_fix` | Apply the literal replacement only if the test suite stays green. |
 
@@ -494,6 +495,8 @@ openmind/
                    stack-match auto-selection
   facets.py        template facet extraction: role classification + verbatim
                    capture facts, all with file:line evidence
+  docs.py          template-driven learning guide: guide sections -> cited,
+                   deterministic markdown pages (notes preserved across rebuilds)
   structure.py     deterministic modules, definitions, imports, calls, entries
   diagrams.py      Mermaid/DOT/interactive graph projections
   glossary.py      verbatim glossary extraction and lookup
@@ -592,6 +595,7 @@ python tests/verify_source_link.py    # source-link parsing and audited egress p
 python tests/verify_resources.py      # ingest RAM guard behavior
 python tests/verify_templates.py      # template profiles: schema gate, deterministic selection
 python tests/verify_facets.py         # template facets: roles, captures, projections, honest empties
+python tests/verify_guide.py          # learning guide: cited pages, notes preservation, honest reset
 python tests/verify_grounding.py      # glossary-first Ask routing, honest miss/empty sources
 python tests/verify.py                # 12 cross-cutting design invariants end to end
 ```
@@ -620,9 +624,10 @@ The following are not claimed as complete in the current build:
 - graph-specific MCP tools for node expansion and graph navigation;
 - a first-class repository memory layer beyond retained Ask history and saved
   solved cases;
-- template-driven guided learning docs (the `guide` template section is
-  reserved but not yet rendered) and more built-in profiles beyond
-  `spring-boot` (Rails, Django, Express/NestJS).
+- a guide artifact in the `.openmind` export (learning-guide pages are
+  currently generated app-side only);
+- visual layer grouping in the Graphs UI (the per-node `role` data is already
+  exposed by the API).
 
 ---
 

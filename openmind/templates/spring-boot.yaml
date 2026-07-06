@@ -6,7 +6,7 @@
 # literals. Everything stays deterministic and evidence-backed — a pattern
 # that matches nothing yields an honest empty section.
 
-schemaVersion: "1.1.0"
+schemaVersion: "1.2.0"
 name: spring-boot
 title: Spring Boot
 description: Layered Spring Boot lens — HTTP/service/persistence layers, route paths, Kafka topics.
@@ -63,5 +63,38 @@ facets:
     captures: [topic]
     files: ["*.java", "*.kt"]
 
-# guide is the guided-doc phase; not authored yet.
-guide: []
+# guide — the learning-doc outline rendered after every learn (map/ -> docs/).
+# Each section is one deterministic query; empty results render honestly.
+guide:
+  - section: overview
+    title: Project overview
+    query: overview
+    intro: What Open Mind learned about this repository, seen through the Spring Boot lens.
+  - section: layers
+    title: The layers
+    query: layers
+    intro: Files classified into Spring's conventional layers, with the matcher that decided each.
+  - section: http-surface
+    title: HTTP surface
+    query: facets
+    facet: http_route
+    intro: Every route path captured verbatim from mapping annotations.
+  - section: kafka-topics
+    title: Kafka topics
+    query: facets
+    facet: kafka_topic
+    intro: Topic literals captured from producers and listeners (constants do not match and are honestly absent).
+  - section: request-flows
+    title: Request flows
+    query: flows
+    role: controller
+    intro: How a request travels from a controller entry point through the name-based call graph.
+  - section: entry-points
+    title: All entry points
+    query: entry_points
+  - section: modules
+    title: Largest modules
+    query: modules
+  - section: domain-terms
+    title: Domain vocabulary
+    query: glossary

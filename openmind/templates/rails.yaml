@@ -1,0 +1,92 @@
+# Open Mind template profile — Ruby on Rails lens (schema 1.2.0)
+#
+# Rails is convention-over-configuration, so the roles lean on the canonical
+# app/ layout and the facets read config/routes.rb and ActiveRecord
+# associations — the places generic extraction cannot interpret.
+
+schemaVersion: "1.2.0"
+name: rails
+title: Ruby on Rails
+description: Rails MVC lens — app/ layers, routes.rb routes and resources, ActiveRecord associations.
+
+match:
+  dependencies: [rails, activerecord, actionpack]
+  languages: [Ruby]
+  marker_files: ["*config/routes.rb"]
+
+roles:
+  - name: controller
+    title: Controllers
+    layer: 1
+    path_globs: ["*app/controllers/*"]
+    name_patterns: ["*_controller.rb"]
+  - name: model
+    title: Models (ActiveRecord)
+    layer: 2
+    path_globs: ["*app/models/*"]
+  - name: view
+    title: Views
+    layer: 3
+    path_globs: ["*app/views/*"]
+  - name: job
+    title: Jobs / workers
+    layer: 4
+    path_globs: ["*app/jobs/*", "*app/workers/*"]
+  - name: mailer
+    title: Mailers
+    layer: 5
+    path_globs: ["*app/mailers/*"]
+  - name: migration
+    title: Migrations
+    layer: 6
+    path_globs: ["*db/migrate/*"]
+  - name: config
+    title: Configuration
+    layer: 7
+    path_globs: ["*config/*"]
+
+facets:
+  - name: rails_route
+    title: Route
+    pattern: '^\s*(get|post|put|patch|delete)\s+["'']([^"'']+)'
+    captures: [method, path]
+    files: ["*config/routes.rb"]
+  - name: rails_resource
+    title: Resource routes
+    pattern: '^\s*resources?\s+:(\w+)'
+    captures: [resource]
+    files: ["*config/routes.rb"]
+  - name: association
+    title: Model association
+    pattern: '^\s*(has_many|has_one|belongs_to|has_and_belongs_to_many)\s+:(\w+)'
+    captures: [kind, name]
+    files: ["*app/models/*"]
+
+guide:
+  - section: overview
+    title: Project overview
+    query: overview
+    intro: What Open Mind learned about this repository, seen through the Rails lens.
+  - section: layers
+    title: The MVC layout
+    query: layers
+  - section: routes
+    title: Routes
+    query: facets
+    facet: rails_route
+    intro: Explicit verb routes captured verbatim from config/routes.rb.
+  - section: resources
+    title: Resource routes
+    query: facets
+    facet: rails_resource
+  - section: associations
+    title: The domain model
+    query: facets
+    facet: association
+    intro: ActiveRecord associations captured from app/models.
+  - section: entry-points
+    title: Entry points
+    query: entry_points
+  - section: domain-terms
+    title: Domain vocabulary
+    query: glossary
