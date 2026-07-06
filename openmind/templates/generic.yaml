@@ -1,4 +1,4 @@
-# Open Mind template profile — schema 1.1.0
+# Open Mind template profile — schema 1.2.0 (all sections active)
 #
 # A template profile is a declarative "lens" for a repository: how to match a
 # stack, which logical roles files play, which extra deterministic facts to
@@ -12,7 +12,7 @@
 # it is NEVER auto-selected, and selecting it changes nothing — it exists as
 # the annotated authoring example.
 
-schemaVersion: "1.1.0"
+schemaVersion: "1.2.0"
 name: generic
 title: Generic (no framework lens)
 description: Neutral baseline — behaves exactly like having no template selected.
@@ -56,7 +56,16 @@ roles: []
 #     files: ["*.java"]
 facets: []
 
-# guide — RESERVED (shape-checked only): the outline of a generated learning
-# document; each section is a query over the learned artifacts, rendered
-# deterministically with honest "not found" for empty sections.
+# guide — ACTIVE (schema 1.2): the outline of the generated learning guide
+# (docs/ pages, rebuilt after every learn). Each section runs ONE
+# deterministic query over the learned maps; every fact cites file:line and
+# an empty result renders an honest "nothing found" line.
+# Queries: overview | layers | entry_points | flows | facets | glossary | modules
+#   - section: http-surface      # page slug (required; 'index' is reserved)
+#     title: HTTP surface        # required
+#     query: facets              # required, from the vocabulary above
+#     facet: http_route          # required when query is 'facets'
+#     role: controller           # optional filter (flows / entry_points)
+#     limit: 20                  # optional cap
+#     intro: One fixed orientation sentence (author-written, never generated).
 guide: []

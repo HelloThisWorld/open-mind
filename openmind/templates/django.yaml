@@ -1,0 +1,81 @@
+# Open Mind template profile — Django lens (schema 1.2.0)
+#
+# Django's conventions are file-name based (views.py / models.py / urls.py),
+# so the roles match basenames and the facets read url patterns and model
+# classes — the framework facts generic extraction cannot interpret.
+
+schemaVersion: "1.2.0"
+name: django
+title: Django
+description: Django lens — views/urls/models layers, url patterns, model classes.
+
+match:
+  dependencies: [django]
+  languages: [Python]
+  marker_files: ["*manage.py"]
+
+roles:
+  - name: view
+    title: Views
+    layer: 1
+    name_patterns: ["views.py", "*_views.py"]
+  - name: urlconf
+    title: URL configuration
+    layer: 2
+    name_patterns: ["urls.py"]
+  - name: model
+    title: Models
+    layer: 3
+    name_patterns: ["models.py"]
+  - name: admin
+    title: Admin
+    layer: 4
+    name_patterns: ["admin.py"]
+  - name: form
+    title: Forms
+    layer: 5
+    name_patterns: ["forms.py"]
+  - name: migration
+    title: Migrations
+    layer: 6
+    path_globs: ["*/migrations/*"]
+  - name: settings
+    title: Settings
+    layer: 7
+    name_patterns: ["settings.py"]
+
+facets:
+  - name: url_route
+    title: URL pattern
+    pattern: '\b(?:path|re_path|url)\s*\(\s*r?["'']([^"'']*)'
+    captures: [path]
+    files: ["*urls.py"]
+  - name: model_class
+    title: Model
+    pattern: '^\s*class\s+(\w+)\s*\([^)]*models\.Model'
+    captures: [model]
+    files: ["*models.py"]
+
+guide:
+  - section: overview
+    title: Project overview
+    query: overview
+    intro: What Open Mind learned about this repository, seen through the Django lens.
+  - section: layers
+    title: The layers
+    query: layers
+  - section: url-surface
+    title: URL surface
+    query: facets
+    facet: url_route
+    intro: URL patterns captured verbatim from urls.py files.
+  - section: models
+    title: The domain model
+    query: facets
+    facet: model_class
+  - section: entry-points
+    title: Entry points
+    query: entry_points
+  - section: domain-terms
+    title: Domain vocabulary
+    query: glossary

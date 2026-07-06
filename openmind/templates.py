@@ -11,12 +11,12 @@ four functions — ``list_templates`` / ``get_template`` / ``auto_select`` /
 resolves: no template selected means every consumer sees ``None`` and behaves
 exactly as before templates existed.
 
-Section staging (deliberate): ``match`` drives auto-selection at learn time;
-``roles`` and ``facets`` are ACTIVE as of template schema 1.1 — their field
-contracts are validated here and consumed by :mod:`openmind.facets`
-(extraction), the ``.openmind`` export (role layers + facet-named flows), and
-the structure/graph API. ``guide`` remains a reserved section — shape-checked
-only, consumed by the guided-doc phase.
+All four sections are ACTIVE: ``match`` drives auto-selection at learn time
+(schema 1.0); ``roles`` and ``facets`` are validated here and consumed by
+:mod:`openmind.facets` (extraction), the ``.openmind`` export, and the
+structure/graph API (schema 1.1); ``guide`` is an ordered outline of learning
+-doc sections — each a deterministic query over the learned maps — validated
+here and rendered by :mod:`openmind.docs` (schema 1.2).
 
 Sources, in precedence order (same name -> user file wins):
   1. ``config.USER_TEMPLATES_DIR``   (<data dir>/templates/*.yaml|yml|json)
@@ -56,8 +56,15 @@ _TEMPLATE_EXTS = (".yaml", ".yml", ".json")
 _MATCH_KEYS = {"dependencies", "languages", "marker_files", "min_score"}
 _ROLE_KEYS = {"name", "title", "layer", "annotations", "name_patterns", "path_globs"}
 _FACET_KEYS = {"name", "title", "pattern", "captures", "files"}
+_GUIDE_KEYS = {"section", "title", "query", "role", "facet", "limit", "intro"}
 _TOP_KEYS = {"schemaVersion", "name", "title", "description",
              "match", "roles", "facets", "guide"}
+
+# the deterministic queries a guide section may run over the learned maps
+# (rendered by openmind.docs; every query cites file:line or reports an
+# honest empty — never generated prose)
+GUIDE_QUERIES = {"overview", "layers", "entry_points", "flows", "facets",
+                 "glossary", "modules"}
 
 
 @dataclass
@@ -127,8 +134,8 @@ def _str_list(value: Any, where: str, errors: List[str]) -> List[str]:
 
 
 def _section_list(value: Any, where: str, errors: List[str]) -> List[Dict[str, Any]]:
-    """Reserved sections (guide): shape-checked only — each item must be a
-    mapping. The field contract activates with the consuming phase."""
+    """Shape gate shared by the section validators: a section is a list of
+    mappings (or absent)."""
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(v, dict) for v in value):
@@ -223,6 +230,53 @@ def _validate_facets(value: Any, errors: List[str]) -> List[Dict[str, Any]]:
     return out
 
 
+def _validate_guide(value: Any, errors: List[str]) -> List[Dict[str, Any]]:
+    """Active contract: an ordered outline of learning-doc sections. Each
+    section runs ONE deterministic query over the learned maps; the renderer
+    (openmind.docs) cites file:line for every fact and reports honest empties,
+    so a guide can never make the docs say more than the maps support."""
+    items = _section_list(value, "guide", errors)
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for i, g in enumerate(items):
+        where = f"guide[{i}]"
+        unknown = sorted(set(g) - _GUIDE_KEYS)
+        if unknown:
+            errors.append(f"{where} unknown keys: {', '.join(unknown)}")
+        section = str(g.get("section") or "").strip().lower()
+        if not section or not _SLUG_RE.match(section):
+            errors.append(f"{where}.section is required (lowercase slug; it "
+                          "becomes the page name)")
+            continue
+        if section in seen or section == "index":
+            errors.append(f"duplicate or reserved guide section '{section}'")
+        seen.add(section)
+        title = str(g.get("title") or "").strip()
+        if not title:
+            errors.append(f"{where}.title is required")
+        query = str(g.get("query") or "").strip().lower()
+        if query not in GUIDE_QUERIES:
+            errors.append(f"{where}.query must be one of: "
+                          f"{', '.join(sorted(GUIDE_QUERIES))}")
+        facet = str(g.get("facet") or "").strip().lower()
+        if query == "facets" and not facet:
+            errors.append(f"{where}: query 'facets' requires a facet name")
+        if facet and not _SLUG_RE.match(facet):
+            errors.append(f"{where}.facet must be a lowercase slug")
+        role = str(g.get("role") or "").strip().lower()
+        if role and not _SLUG_RE.match(role):
+            errors.append(f"{where}.role must be a lowercase slug")
+        limit = g.get("limit")
+        if limit is not None and (not isinstance(limit, int) or limit < 1):
+            errors.append(f"{where}.limit must be a positive integer")
+            limit = None
+        out.append({"section": section, "title": title, "query": query,
+                    "facet": facet, "role": role,
+                    "limit": limit if isinstance(limit, int) else None,
+                    "intro": str(g.get("intro") or "").strip()})
+    return out
+
+
 def _parse(data: Dict[str, Any], path: Path, source: str) -> Template:
     errors: List[str] = []
 
@@ -278,7 +332,7 @@ def _parse(data: Dict[str, Any], path: Path, source: str) -> Template:
         match=match,
         roles=_validate_roles(data.get("roles"), errors),
         facets=_validate_facets(data.get("facets"), errors),
-        guide=_section_list(data.get("guide"), "guide", errors),
+        guide=_validate_guide(data.get("guide"), errors),
         errors=errors,
     )
 

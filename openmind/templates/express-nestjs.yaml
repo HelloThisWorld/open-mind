@@ -1,0 +1,84 @@
+# Open Mind template profile — Express / NestJS lens (schema 1.2.0)
+#
+# Covers both idioms: Express-style verb registrations (app.get("/path"))
+# and NestJS-style decorators (@Get("path"), *.controller.ts naming).
+#
+# min_score is raised to 5 ON PURPOSE: routes/ folders and TypeScript alone
+# are common in repos that are not web services, so auto-selection requires
+# manifest evidence (an express/@nestjs/koa/fastify dependency) on top of the
+# language signal. An explicit project override works regardless.
+
+schemaVersion: "1.2.0"
+name: express-nestjs
+title: Express / NestJS
+description: Node web lens — controllers/services/modules, Express verb routes, NestJS route decorators.
+
+match:
+  dependencies: [express, "@nestjs", fastify, koa]
+  languages: [TypeScript, JavaScript]
+  marker_files: ["*src/routes/*"]
+  min_score: 5
+
+roles:
+  - name: controller
+    title: Controllers / route handlers
+    layer: 1
+    name_patterns: ["*.controller.ts", "*.controller.js"]
+    path_globs: ["*routes/*", "*controllers/*"]
+  - name: service
+    title: Services
+    layer: 2
+    name_patterns: ["*.service.ts", "*.service.js"]
+    path_globs: ["*services/*"]
+  - name: module
+    title: Modules (NestJS wiring)
+    layer: 3
+    name_patterns: ["*.module.ts"]
+  - name: middleware
+    title: Middleware
+    layer: 4
+    path_globs: ["*middleware/*", "*middlewares/*"]
+  - name: model
+    title: Models / entities / schemas
+    layer: 5
+    path_globs: ["*models/*", "*entities/*", "*schemas/*"]
+
+facets:
+  - name: express_route
+    title: Express route
+    pattern: '\b(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*["'']([^"'']+)'
+    captures: [method, path]
+    files: ["*.ts", "*.js", "*.mjs"]
+  - name: nest_route
+    title: NestJS route
+    pattern: '@(Get|Post|Put|Patch|Delete)\s*\(\s*(?:["'']([^"'']*)["''])?\s*\)'
+    captures: [method, path]
+    files: ["*.ts"]
+
+guide:
+  - section: overview
+    title: Project overview
+    query: overview
+    intro: What Open Mind learned about this repository, seen through the Express/NestJS lens.
+  - section: layers
+    title: The layers
+    query: layers
+  - section: http-surface
+    title: HTTP surface
+    query: facets
+    facet: express_route
+    intro: Express verb registrations captured verbatim.
+  - section: nest-routes
+    title: NestJS routes
+    query: facets
+    facet: nest_route
+  - section: request-flows
+    title: Request flows
+    query: flows
+    role: controller
+  - section: entry-points
+    title: Entry points
+    query: entry_points
+  - section: domain-terms
+    title: Domain vocabulary
+    query: glossary
