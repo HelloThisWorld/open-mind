@@ -11,11 +11,12 @@ four functions — ``list_templates`` / ``get_template`` / ``auto_select`` /
 resolves: no template selected means every consumer sees ``None`` and behaves
 exactly as before templates existed.
 
-Phase staging (deliberate): the current build VALIDATES the full schema but
-only CONSUMES the header + ``match`` section (auto-selection at learn time and
-the selection API). ``roles`` / ``facets`` / ``guide`` are reserved sections —
-shape-checked now so authored templates stay forward-compatible, consumed by
-the extraction/projection phases.
+Section staging (deliberate): ``match`` drives auto-selection at learn time;
+``roles`` and ``facets`` are ACTIVE as of template schema 1.1 — their field
+contracts are validated here and consumed by :mod:`openmind.facets`
+(extraction), the ``.openmind`` export (role layers + facet-named flows), and
+the structure/graph API. ``guide`` remains a reserved section — shape-checked
+only, consumed by the guided-doc phase.
 
 Sources, in precedence order (same name -> user file wins):
   1. ``config.USER_TEMPLATES_DIR``   (<data dir>/templates/*.yaml|yml|json)
@@ -48,8 +49,13 @@ _W_OTHER_LANGUAGE = 1                 # match.languages hit on a non-primary lan
 _W_MARKER_FILE = 2                    # per matched match.marker_files pattern
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# role/facet names are identifier-like (they key fact records), so unlike
+# template names they may also use underscores
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _TEMPLATE_EXTS = (".yaml", ".yml", ".json")
 _MATCH_KEYS = {"dependencies", "languages", "marker_files", "min_score"}
+_ROLE_KEYS = {"name", "title", "layer", "annotations", "name_patterns", "path_globs"}
+_FACET_KEYS = {"name", "title", "pattern", "captures", "files"}
 _TOP_KEYS = {"schemaVersion", "name", "title", "description",
              "match", "roles", "facets", "guide"}
 
@@ -121,14 +127,100 @@ def _str_list(value: Any, where: str, errors: List[str]) -> List[str]:
 
 
 def _section_list(value: Any, where: str, errors: List[str]) -> List[Dict[str, Any]]:
-    """Reserved sections (roles/facets/guide): shape-checked only — each item
-    must be a mapping. Their field contracts activate with the consuming phase."""
+    """Reserved sections (guide): shape-checked only — each item must be a
+    mapping. The field contract activates with the consuming phase."""
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(v, dict) for v in value):
         errors.append(f"{where} must be a list of mappings")
         return []
     return value
+
+
+def _validate_roles(value: Any, errors: List[str]) -> List[Dict[str, Any]]:
+    """Active contract: each role classifies files into a logical layer via at
+    least one matcher. Order matters — the first matching role wins — so the
+    normalized list preserves template order."""
+    items = _section_list(value, "roles", errors)
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for i, r in enumerate(items):
+        where = f"roles[{i}]"
+        unknown = sorted(set(r) - _ROLE_KEYS)
+        if unknown:
+            errors.append(f"{where} unknown keys: {', '.join(unknown)}")
+        name = str(r.get("name") or "").strip().lower()
+        if not name or not _SLUG_RE.match(name):
+            errors.append(f"{where}.name is required (lowercase slug)")
+            continue
+        if name in seen:
+            errors.append(f"duplicate role name '{name}'")
+        seen.add(name)
+        layer = r.get("layer")
+        if layer is not None and (not isinstance(layer, int) or layer < 1):
+            errors.append(f"{where}.layer must be a positive integer")
+            layer = None
+        annotations = _str_list(r.get("annotations"), f"{where}.annotations", errors)
+        for pat in annotations:
+            try:
+                re.compile(pat)
+            except re.error as exc:
+                errors.append(f"{where}.annotations pattern {pat!r} does not "
+                              f"compile: {exc}")
+        role = {"name": name,
+                "title": str(r.get("title") or "").strip() or name,
+                "layer": layer if isinstance(layer, int) else None,
+                "annotations": annotations,
+                "name_patterns": _str_list(r.get("name_patterns"),
+                                           f"{where}.name_patterns", errors),
+                "path_globs": _str_list(r.get("path_globs"),
+                                        f"{where}.path_globs", errors)}
+        if not (role["annotations"] or role["name_patterns"] or role["path_globs"]):
+            errors.append(f"{where} needs at least one matcher "
+                          "(annotations / name_patterns / path_globs)")
+        out.append(role)
+    return out
+
+
+def _validate_facets(value: Any, errors: List[str]) -> List[Dict[str, Any]]:
+    """Active contract: each facet is a line regex whose capture groups map
+    1:1 onto named ``captures``; every match becomes a fact with file:line
+    evidence. The regex must compile at load time — a bad pattern fails HERE,
+    visibly, not silently at the next learn."""
+    items = _section_list(value, "facets", errors)
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for i, f in enumerate(items):
+        where = f"facets[{i}]"
+        unknown = sorted(set(f) - _FACET_KEYS)
+        if unknown:
+            errors.append(f"{where} unknown keys: {', '.join(unknown)}")
+        name = str(f.get("name") or "").strip().lower()
+        if not name or not _SLUG_RE.match(name):
+            errors.append(f"{where}.name is required (lowercase slug)")
+            continue
+        if name in seen:
+            errors.append(f"duplicate facet name '{name}'")
+        seen.add(name)
+        pattern = str(f.get("pattern") or "")
+        captures = _str_list(f.get("captures"), f"{where}.captures", errors)
+        if not pattern:
+            errors.append(f"{where}.pattern is required")
+        else:
+            try:
+                groups = re.compile(pattern).groups
+                if groups != len(captures):
+                    errors.append(f"{where}: pattern has {groups} capture "
+                                  f"group(s) but captures names {len(captures)}"
+                                  " — they must match 1:1")
+            except re.error as exc:
+                errors.append(f"{where}.pattern does not compile: {exc}")
+        out.append({"name": name,
+                    "title": str(f.get("title") or "").strip() or name,
+                    "pattern": pattern,
+                    "captures": captures,
+                    "files": _str_list(f.get("files"), f"{where}.files", errors)})
+    return out
 
 
 def _parse(data: Dict[str, Any], path: Path, source: str) -> Template:
@@ -184,8 +276,8 @@ def _parse(data: Dict[str, Any], path: Path, source: str) -> Template:
         path=str(path),
         schema_version=ver,
         match=match,
-        roles=_section_list(data.get("roles"), "roles", errors),
-        facets=_section_list(data.get("facets"), "facets", errors),
+        roles=_validate_roles(data.get("roles"), errors),
+        facets=_validate_facets(data.get("facets"), errors),
         guide=_section_list(data.get("guide"), "guide", errors),
         errors=errors,
     )

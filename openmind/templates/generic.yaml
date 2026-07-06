@@ -1,4 +1,4 @@
-# Open Mind template profile — schema 1.0.0
+# Open Mind template profile — schema 1.1.0
 #
 # A template profile is a declarative "lens" for a repository: how to match a
 # stack, which logical roles files play, which extra deterministic facts to
@@ -12,7 +12,7 @@
 # it is NEVER auto-selected, and selecting it changes nothing — it exists as
 # the annotated authoring example.
 
-schemaVersion: "1.0.0"
+schemaVersion: "1.1.0"
 name: generic
 title: Generic (no framework lens)
 description: Neutral baseline — behaves exactly like having no template selected.
@@ -30,23 +30,33 @@ match:
   # min_score: 3        # optional override of the auto-selection floor
 
 # ---------------------------------------------------------------------------
-# Reserved sections — validated for shape today, consumed by later phases.
-# Authoring them now is safe; they simply have no effect until the consuming
-# phase ships.
+# roles / facets — ACTIVE sections (schema 1.1): consumed by the learn
+# pipeline (map/template_facts.json), the structure/graph API, and the
+# .openmind export. See spring-boot.yaml for a fully worked example.
 # ---------------------------------------------------------------------------
 
-# roles — classify files/classes into logical layers (e.g. controller, service,
-# repository, entity, rule, workflow) via path globs / annotation / name
-# patterns, so architecture output can speak the framework's language instead
-# of raw directories.
+# roles — classify files into logical layers via matchers, checked in order
+# (first matching role wins; within a role: annotations regex, then file-name
+# glob, then path glob). Each role needs at least one matcher.
+#   - name: controller            # lowercase slug (required)
+#     title: Controllers          # display name
+#     layer: 1                    # presentation order, 1 = outermost
+#     annotations: ['@RestController\b']   # line regexes (must compile)
+#     name_patterns: ["*Controller.java"]  # file-name globs
+#     path_globs: ["*controllers/*"]       # repo-relative path globs
 roles: []
 
-# facets — extra deterministic extraction patterns with capture groups (e.g.
-# HTTP route paths from @GetMapping("..."), topic names from send("...")).
-# Every captured fact will carry file:line evidence.
+# facets — deterministic line regexes whose capture groups become named,
+# evidence-backed facts ({file, line, snippet} each). captures must name the
+# groups 1:1; files (optional) limits which files are scanned.
+#   - name: http_route
+#     title: HTTP route
+#     pattern: '@(Get|Post)Mapping\s*\(\s*"([^"]*)"'
+#     captures: [method, path]
+#     files: ["*.java"]
 facets: []
 
-# guide — the outline of a generated learning document; each section is a
-# query over the learned artifacts (entry points, flows by role, glossary...),
-# rendered deterministically with honest "not found" for empty sections.
+# guide — RESERVED (shape-checked only): the outline of a generated learning
+# document; each section is a query over the learned artifacts, rendered
+# deterministically with honest "not found" for empty sections.
 guide: []

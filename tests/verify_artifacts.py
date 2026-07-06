@@ -63,7 +63,7 @@ try:
     # --- manifest ---
     check("manifest.json is generated", (out_a / "manifest.json").is_file())
     manifest = load(out_a, "manifest.json")
-    check("manifest schemaVersion is 1.0.0", manifest.get("schemaVersion") == "1.0.0")
+    check("manifest schemaVersion is 1.1.0", manifest.get("schemaVersion") == "1.1.0")
     check("manifest names the generator", manifest.get("generator", {}).get("name") == "open-mind")
     check("manifest records the repository name",
           manifest.get("repository", {}).get("name") == "sample-repo")
@@ -82,6 +82,10 @@ try:
           metadata["summary"]["filesIndexed"] > 0
           and metadata["summary"]["symbolsIndexed"] > 0
           and metadata["summary"]["artifactsGenerated"] == len(refs))
+    check("metadata is self-describing about the template (none matches this repo)",
+          "template" in metadata and metadata["template"] is None)
+    check("without a template the 1.0.0 shape is preserved (no layers key)",
+          "layers" not in load(out_a, refs["architecture"]))
 
     # --- glossary ---
     glossary_doc = load(out_a, refs["glossary"])

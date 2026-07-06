@@ -587,6 +587,27 @@ def _run_ingest(job_id: str) -> None:
     except Exception as exc:
         _log(job_id, f"[templates] auto-selection skipped: {exc}")
 
+    # ---- template facts (roles + facet captures for the RESOLVED profile) ----
+    # Consumes the selection above (override > auto) and persists the facts map
+    # like the other learn artifacts: deterministic, file:line evidence. A learn
+    # that resolves NO template removes any stale facts file so readers never
+    # serve facts from a profile that is no longer selected. Guarded the same
+    # way: a facet error logs and skips, never fails the learn.
+    try:
+        from . import facets as facetsmod, templates as templatesmod
+        tpl = templatesmod.resolve_for_project(db.get_project(project_id))
+        if tpl and (tpl.roles or tpl.facets):
+            fdoc = facetsmod.build_facts(
+                [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files], tpl)
+            mapio.save_facts(project_id, fdoc)
+            _log(job_id, f"[templates] '{tpl.name}' facts: "
+                         f"{fdoc['stats']['files_classified']} file(s) classified, "
+                         f"{fdoc['stats']['fact_count']} fact(s) captured.")
+        else:
+            mapio.delete_facts(project_id)
+    except Exception as exc:
+        _log(job_id, f"[templates] facet build skipped: {exc}")
+
     # ---- step 3: deterministic glossary (term/acronym -> VERBATIM definition) ----
     # The primary build-time artifact: term definitions are extracted ONCE here
     # (pure pattern-matching, no LLM, verbatim from authoritative sources) and
