@@ -5,6 +5,8 @@ Uses the deterministic hashing embedder for speed/repeatability.
 """
 import os, sys, time, json, shutil, threading, http.server, socketserver
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "fixtures", "testrepos").replace("\\", "/")

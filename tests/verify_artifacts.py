@@ -14,6 +14,8 @@ from pathlib import Path
 
 os.environ.setdefault("OPENMIND_DATA_DIR", tempfile.mkdtemp())
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 
 from openmind import artifacts  # noqa: E402
 

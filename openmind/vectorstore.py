@@ -10,9 +10,13 @@ download path inside Chroma, and no egress).
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import sqlite3
 import threading
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -21,6 +25,11 @@ from . import config
 _lock = threading.Lock()
 _backend: Optional[str] = None
 _chroma_client = None
+
+# Rows drained per delete batch while dropping a collection (see
+# _drop_chroma_collection): ~0.5s of GIL hold per batch measured on a real
+# 2 GB store, small enough that the app stays responsive throughout.
+DROP_BATCH = 500
 
 
 def _detect_backend() -> str:
@@ -51,6 +60,118 @@ def backend_name() -> str:
     return _detect_backend()
 
 
+def _drop_chroma_collection(name: str, cancel: Optional[Callable[[], bool]] = None) -> bool:
+    """Delete a chroma collection WITHOUT freezing the app.
+
+    The chromadb 1.x rust bindings hold the GIL for the whole duration of a
+    call, so a single ``delete_collection`` on a learned project (measured:
+    32s for a 35k-chunk collection on a 2 GB store) freezes every Python
+    thread — all HTTP requests, the SSE streams, the job worker AND SIGINT
+    delivery, so Ctrl+C appears dead. Worse, the store's SQLite runs in
+    rollback-journal mode: that one giant transaction rolls back entirely if
+    the process is killed mid-way, so an impatient kill means the delete
+    NEVER completes across restarts.
+
+    Instead, drain the collection in small id batches — each call holds the
+    GIL for only ~0.5s and each batch commits — then drop the empty
+    collection (cheap). A kill or shutdown mid-drain loses at most one batch;
+    the caller's 'deleting' tombstone re-spawns the cleanup on the next start
+    and the drain RESUMES where it stopped.
+
+    Returns True once the collection is gone (or never existed), False if
+    *cancel* stopped the drain early or a batch failed (caller retries later).
+    """
+    try:
+        col = _chroma_client.get_collection(name)
+    except Exception:
+        return True   # no such collection — nothing to drop
+    try:
+        total = col.count()
+        drained = 0
+        while True:
+            if cancel is not None and cancel():
+                print(f"[vectorstore] drop of {name} paused at "
+                      f"{drained}/{total} (shutdown); resumes on next start.",
+                      flush=True)
+                return False
+            ids = col.get(limit=DROP_BATCH, include=[]).get("ids") or []
+            if not ids:
+                break
+            col.delete(ids=ids)
+            drained += len(ids)
+            if drained % 10_000 < DROP_BATCH:
+                print(f"[vectorstore] dropping {name}: {drained}/{total}", flush=True)
+            time.sleep(0.01)   # deliberate GIL gap: let requests + signals run
+        _chroma_client.delete_collection(name)
+        return True
+    except Exception as exc:
+        print(f"[vectorstore] drop of {name} interrupted: {exc!r} "
+              f"(cleanup will retry on the next start)", flush=True)
+        return False
+
+
+def drop_collection(collection_name: str,
+                    cancel: Optional[Callable[[], bool]] = None) -> bool:
+    """Backend-dispatching collection drop (no store instantiation, so the
+    delete path never get_or_CREATEs a collection just to remove it).
+    Returns False only when the drop was interrupted and should be retried."""
+    if _detect_backend() == "chroma":
+        return _drop_chroma_collection(collection_name, cancel)
+    NumpyStore(collection_name).drop()
+    return True
+
+
+def sweep_orphan_segment_dirs() -> List[str]:
+    """Remove HNSW segment directories that no live segment references.
+
+    chromadb 1.x does not delete the on-disk vector-segment directory of the
+    legacy persistent layout when a collection is dropped, so every project
+    delete used to leak its whole HNSW index on disk. Read the live segment
+    ids from chroma.sqlite3 and remove every UUID directory nothing references.
+
+    MUST run BEFORE the chroma client exists in this process (the app calls it
+    first thing in lifespan startup, before the job worker / warm-up threads).
+    A raw sqlite read concurrent with a rust-binding write DEADLOCKS the whole
+    process: the rust call holds the GIL while waiting for our reader's SHARED
+    lock, and our reader holds the SHARED lock while waiting for the GIL. The
+    _chroma_client guard makes a late call a safe no-op instead of that."""
+    removed: List[str] = []
+    if _chroma_client is not None:
+        print("[vectorstore] segment-dir sweep skipped: chroma client already "
+              "open (sweep must run before first use).", flush=True)
+        return removed
+    db_path = config.CHROMA_DIR / "chroma.sqlite3"
+    if not db_path.exists():
+        return removed
+    try:
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro",
+                              uri=True, timeout=5)
+        try:
+            live = {r[0] for r in con.execute("SELECT id FROM segments")}
+        finally:
+            con.close()
+    except Exception as exc:
+        # e.g. a hot journal from a mid-delete kill (read-only can't roll it
+        # back). The client rolls it back when it opens; next boot sweeps.
+        print(f"[vectorstore] segment-dir sweep skipped: {exc!r}", flush=True)
+        return removed
+    uuid_pat = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    cutoff = time.time() - 300
+    for d in config.CHROMA_DIR.iterdir():
+        try:
+            if not (d.is_dir() and uuid_pat.match(d.name) and d.name not in live):
+                continue
+            if d.stat().st_mtime > cutoff:   # too fresh -> might be mid-create
+                continue
+            shutil.rmtree(d, ignore_errors=True)
+            if not d.exists():
+                removed.append(d.name)
+        except OSError:
+            continue
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Common interface
 # ---------------------------------------------------------------------------
@@ -63,7 +184,7 @@ class _Store:
     def query(self, query_embedding, n_results=10, where=None) -> Dict[str, Any]: ...
     def count(self) -> int: ...
     def reset(self): ...
-    def drop(self): ...
+    def drop(self, cancel=None): ...
 
 
 # ---------------------------------------------------------------------------
@@ -137,20 +258,15 @@ class ChromaStore(_Store):
         return self._col.count()
 
     def reset(self):
-        try:
-            _chroma_client.delete_collection(self.name)
-        except Exception:
-            pass
+        _drop_chroma_collection(self.name)
         self._col = _chroma_client.get_or_create_collection(
             name=self.name, metadata={"hnsw:space": "cosine"})
 
-    def drop(self):
-        """Delete the collection WITHOUT recreating it (used on project delete —
-        recreating an empty collection we're about to discard is wasted work)."""
-        try:
-            _chroma_client.delete_collection(self.name)
-        except Exception:
-            pass
+    def drop(self, cancel=None):
+        """Delete the collection WITHOUT recreating it (used on project delete /
+        terminate). Drains in short batches so the app never freezes — see
+        _drop_chroma_collection. Returns False if *cancel* interrupted it."""
+        return _drop_chroma_collection(self.name, cancel)
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +361,14 @@ class NumpyStore(_Store):
         self._data = {}
         self._save()
 
-    def drop(self):
+    def drop(self, cancel=None):
         self._data = {}
         try:
             if self.path.exists():
                 self.path.unlink()
         except Exception:
             pass
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -375,11 +492,11 @@ def drop_orphan_collections(known_project_ids) -> List[str]:
         for name in names:
             pid = _pid_of(name)
             if pid and pid not in known:
-                try:
-                    _chroma_client.delete_collection(name)
+                # drained drop (never a one-shot delete_collection): an orphan
+                # can be a full-size learned collection, and this runs at
+                # startup where a GIL-held freeze would look like a hung boot.
+                if _drop_chroma_collection(name):
                     dropped.append(name)
-                except Exception:
-                    pass
     else:
         npdir = config.CHROMA_DIR / "np"
         if npdir.exists():

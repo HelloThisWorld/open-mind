@@ -13,6 +13,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 from openmind import config, resources  # noqa: E402
 
 config.INGEST_MEM_WAIT_S = 0  # don't actually sleep in the guard during the test
