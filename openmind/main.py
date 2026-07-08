@@ -24,6 +24,25 @@ from . import (ask as askmod, cases, config, conversation, db, diagrams,
 from .model_server import server as model_server
 
 
+def _sweep_orphan_project_dirs() -> List[str]:
+    """Remove data/<p_...> dirs whose project row no longer exists — leftovers
+    of a crash between the storage wipe and the row delete (or of older delete
+    paths). Only exact project-id-shaped dirs are touched, and 'deleting'
+    tombstones are NOT orphans (their cleanup is still running/resuming)."""
+    import re
+    import shutil
+    known = {p["id"] for p in db.list_projects()} | \
+            {p["id"] for p in db.list_projects("deleting")}
+    gone: List[str] = []
+    for d in config.DATA_DIR.iterdir():
+        if (d.is_dir() and re.fullmatch(r"p_[0-9a-f]{12}", d.name)
+                and d.name not in known):
+            shutil.rmtree(d, ignore_errors=True)
+            if not d.exists():
+                gone.append(d.name)
+    return gone
+
+
 def _warm_vectorstore() -> None:
     """Open the Chroma persistent client ONCE, off the request path. The client is
     lazily created on first use; if that first use is a user click (delete/search)
@@ -32,14 +51,20 @@ def _warm_vectorstore() -> None:
     healthy store; the pathological multi-minute stalls come from a SECOND process
     opening the same store concurrently — keep one server per data dir.)
 
-    Also reclaims storage leaked by older delete paths: collections whose project
-    no longer exists are dropped (shrinks the store -> faster ops)."""
+    Also the storage janitor: drops collections whose project no longer exists
+    and removes orphaned project data dirs — best-effort, off the request path.
+    (Leaked HNSW segment dirs are swept in lifespan BEFORE the client opens —
+    see sweep_orphan_segment_dirs for why it cannot run here.)"""
     try:
         vectorstore.backend_name()
         orphans = vectorstore.drop_orphan_collections({p["id"] for p in db.list_projects()})
         if orphans:
             print(f"[startup] dropped {len(orphans)} orphaned vector collection(s): "
                   f"{', '.join(orphans)}", flush=True)
+        gone = _sweep_orphan_project_dirs()
+        if gone:
+            print(f"[startup] removed {len(gone)} orphaned project data dir(s): "
+                  f"{', '.join(gone)}", flush=True)
     except Exception as exc:
         print(f"[startup] vectorstore warm-up failed (first use will retry lazily): {exc}",
               flush=True)
@@ -51,9 +76,20 @@ async def _lifespan(app: FastAPI):
     # starts under every server/runtime — otherwise jobs would sit queued.
     config.ensure_dirs()
     db.init_db()
+    # sweep leaked HNSW segment dirs FIRST — it reads chroma.sqlite3 with a raw
+    # (read-only) connection, which is only safe while NO chroma client exists
+    # in this process (start_worker may spawn delete-cleanup threads that open
+    # one; racing the rust bindings here deadlocks GIL <-> sqlite lock).
+    swept = vectorstore.sweep_orphan_segment_dirs()
+    if swept:
+        print(f"[startup] removed {len(swept)} leaked vector segment dir(s).",
+              flush=True)
     jobs.start_worker()
     threading.Thread(target=_warm_vectorstore, name="vs-warmup", daemon=True).start()
     yield
+    # shutdown: stop background delete-cleanup at its next batch so Ctrl+C
+    # exits promptly; 'deleting' tombstones resume on the next start.
+    jobs.begin_shutdown()
 
 
 # docs_url disabled: the spec reserves GET /docs and /docs/{page} for the

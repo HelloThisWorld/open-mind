@@ -1,6 +1,8 @@
 """Tests for the 5 user-reported fixes (new endpoints + adaptive behavior)."""
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 results=[]
 def check(n,c,d=""): results.append((n,bool(c))); print(("PASS " if c else "FAIL ")+n+(("  -- "+d) if d else ""))
 

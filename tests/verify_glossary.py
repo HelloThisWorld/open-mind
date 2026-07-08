@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 from openmind import glossary  # noqa: E402
 
 _passed = _failed = 0

@@ -2,6 +2,8 @@
 attachments labeled+cited, OCR graceful, model-not-ready refusal, SSE streaming."""
 import os, sys, time, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 from fastapi.testclient import TestClient
 from openmind.main import app
 from openmind import ask, llm_client

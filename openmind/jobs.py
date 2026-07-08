@@ -28,6 +28,9 @@ _worker_started = False
 _current_job_id: Optional[str] = None
 _deleting_lock = threading.Lock()
 _deleting: set = set()     # project_ids with an in-flight background delete-cleanup
+# set by the app's lifespan on shutdown: background cleanup stops at its next
+# small batch so Ctrl+C exits promptly; 'deleting' tombstones resume next start.
+_shutdown = threading.Event()
 # if set, the model server was stopped to free the GPU for embedding and must be
 # restarted once the current job ends (handled in the worker loop's finally).
 _resume_model_cfg: Optional[Dict[str, Any]] = None
@@ -41,10 +44,20 @@ def start_worker() -> None:
     if _worker_started:
         return
     _worker_started = True
+    _shutdown.clear()
     _recover_on_restart()
     reconcile_enrichment()   # completeness backstop after any restart/crash
     t = threading.Thread(target=_worker_loop, name="openmind-job-worker", daemon=True)
     t.start()
+
+
+def begin_shutdown() -> None:
+    """Called from the app lifespan on shutdown. Interrupts any background
+    delete-cleanup at its next batch (the 'deleting' tombstone makes it resume
+    on the next start), so process exit is prompt instead of waiting behind a
+    long storage drain."""
+    _shutdown.set()
+    _wake.set()
 
 
 def _recover_on_restart() -> None:
@@ -370,7 +383,7 @@ def _wait_jobs_stopped(project_id: str, timeout: float = 20.0) -> None:
     one file / one embed batch), then force-fail any straggler. Used off the request
     path so a slow in-flight embed never freezes the UI."""
     deadline = time.time() + timeout
-    while time.time() < deadline:
+    while time.time() < deadline and not _shutdown.is_set():
         if not [j for j in db.list_jobs(project_ids=[project_id])
                 if j["status"] == "running"]:
             break
@@ -428,17 +441,23 @@ def _cleanup_deleted(project_id: str) -> None:
     collections, delete the data dir, and finally drop the entity row (+ jobs +
     file_index + ask history + machine-local path config). Idempotent; also used for
     restart recovery. The project is already a 'deleting' tombstone (hidden from the
-    UI, un-revivable), so this races nothing the user can see."""
+    UI, un-revivable), so this races nothing the user can see.
+
+    Interruptible + resumable: the collection drop drains in short batches
+    (never one giant GIL-holding delete_collection — that froze the whole app
+    AND blocked Ctrl+C for its duration); on shutdown or a batch failure we
+    return with the tombstone kept, and the next start re-spawns this cleanup
+    to finish the remainder. The entity row is removed only once storage is
+    actually gone, so nothing is ever leaked silently."""
     import shutil
     try:
         _wait_jobs_stopped(project_id, timeout=30.0)
-        for store in (vectorstore.get_code_store(project_id),
-                      vectorstore.get_cases_store(project_id)):
-            try:
-                store.drop()                   # delete-only (no recreate)
-            except Exception as exc:
-                print(f"[delete] vector collection drop failed for {project_id}: {exc}",
-                      flush=True)
+        if _shutdown.is_set():
+            return                     # still 'deleting' -> resumed on next start
+        for name in (vectorstore.code_collection_name(project_id),
+                     vectorstore.cases_collection_name(project_id)):
+            if not vectorstore.drop_collection(name, cancel=_shutdown.is_set):
+                return                 # interrupted/failed -> retry on next start
         try:
             d = config.project_dir(project_id)
             if d.exists():
@@ -449,6 +468,7 @@ def _cleanup_deleted(project_id: str) -> None:
         except Exception as exc:
             print(f"[delete] data dir removal failed for {project_id}: {exc}", flush=True)
         db.delete_project(project_id)          # row finally disappears
+        print(f"[delete] storage reclaimed for {project_id}", flush=True)
     finally:
         with _deleting_lock:
             _deleting.discard(project_id)

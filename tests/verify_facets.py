@@ -17,6 +17,8 @@ import time
 os.environ.setdefault("OPENMIND_DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("OPENMIND_EMBED_OFFLINE", "1")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _isolate  # noqa: E402,F401 — forces an isolated data dir (never the live one)
 
 from openmind import artifacts, config, facets, templates  # noqa: E402
 
