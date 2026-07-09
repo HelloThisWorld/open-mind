@@ -11,6 +11,7 @@ context, saved solved cases, and an MCP tool surface.
 
 </div>
 
+[![CI](https://github.com/HelloThisWorld/open-mind/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HelloThisWorld/open-mind/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12+-3776ab.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Agent ready](https://img.shields.io/badge/AI%20Agents-MCP%20tools-8a2be2.svg)](#use-it-from-an-agent-mcp)
