@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  artifact-contract:
+    name: Artifact export contract (stdlib-only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Syntax-level build check across the whole package; imports nothing,
+      # so it needs no dependencies from requirements.txt.
+      - name: Byte-compile package
+        run: python -m compileall -q openmind
+
+      # tests/verify_artifacts.py is deliberately dependency-free (pure
+      # stdlib + the deterministic extractors): it generates real artifacts
+      # from fixtures/sample-repo into a temp dir and verifies the export
+      # schema, evidence discipline, and determinism. This is the contract
+      # that external consumers (e.g. open-mind-mcp-server) depend on.
+      - name: Verify artifact export contract
+        run: python tests/verify_artifacts.py
