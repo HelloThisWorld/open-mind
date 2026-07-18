@@ -1,0 +1,613 @@
+"""The OpenMind command-line interface.
+
+    python -m openmind.cli --help
+
+One runtime, four front ends: this CLI, the MCP server, the FastAPI app and the
+tests all go through :func:`openmind.runtime.get_runtime`, so a workspace
+created here is the same workspace the UI shows, and a job enqueued here is
+executed by the same worker.
+
+MACHINE-READABLE MODE
+---------------------
+``--json`` prints exactly ONE JSON object on stdout and nothing else. Every
+human message, warning and progress line goes to stderr. No ANSI escapes are
+ever emitted, in either mode. A failure still prints a JSON object —
+``{"ok": false, "error": {"code": ..., "message": ...}}`` — so the output stays
+parseable when the exit code is non-zero.
+
+EXIT CODES
+----------
+    0  success
+    1  the operation completed but the domain result is a failure
+       (doctor found a problem; the workspace or job does not exist)
+    2  invalid arguments or configuration
+    3  a required runtime dependency or backend is unavailable
+    4  job or execution failure
+    5  timeout or cancellation
+
+argparse's own usage errors also exit 2, which matches.
+
+WHY argparse
+------------
+The contract above is a handful of subcommands, five global flags and six exit
+codes. The standard library covers all of it, and a dependency added only to
+save a few lines of parser wiring would be a dependency to audit, pin and
+install on every platform in CI.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from .domain.errors import (DependencyUnavailable, InvalidRequest,
+                            OpenMindError, OperationTimeout)
+from .version import RUNTIME_VERSION
+
+EXIT_OK = 0
+EXIT_DOMAIN_FAILURE = 1
+EXIT_INVALID_USAGE = 2
+EXIT_DEPENDENCY = 3
+EXIT_JOB_FAILURE = 4
+EXIT_TIMEOUT = 5
+
+PROG = "openmind"
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+class Output:
+    """Routes human text to stderr and the machine-readable result to stdout.
+
+    In JSON mode stdout carries exactly one object, emitted once at the end.
+    That is what lets a caller do ``openmind status --json | jq`` without
+    filtering progress noise, and why every ``say``/``warn`` goes to stderr
+    even in human mode — the two streams keep the same meaning in both modes.
+    """
+
+    def __init__(self, as_json: bool = False, quiet: bool = False,
+                 verbose: bool = False) -> None:
+        self.as_json = as_json
+        self.quiet = quiet
+        self.verbose = verbose
+
+    def say(self, message: str) -> None:
+        """Human progress. Suppressed by --quiet, never on stdout."""
+        if not self.quiet and not self.as_json:
+            print(message, file=sys.stderr, flush=True)
+
+    def detail(self, message: str) -> None:
+        """Extra diagnostics, only with --verbose."""
+        if self.verbose:
+            print(message, file=sys.stderr, flush=True)
+
+    def warn(self, message: str) -> None:
+        """A warning. Survives --quiet (it is not progress chatter), but is
+        still stderr so it never contaminates JSON output."""
+        if not self.as_json or self.verbose:
+            print(f"warning: {message}", file=sys.stderr, flush=True)
+
+    def emit(self, payload: Dict[str, Any],
+             human: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+        """Print the final result."""
+        if self.as_json:
+            print(json.dumps(payload, indent=2, default=str), flush=True)
+        elif human is not None and not self.quiet:
+            human(payload)
+
+    def emit_error(self, error: Dict[str, Any]) -> None:
+        if self.as_json:
+            print(json.dumps({"ok": False, "error": error}, indent=2, default=str),
+                  flush=True)
+        else:
+            print(f"error: {error.get('message', 'unknown error')}",
+                  file=sys.stderr, flush=True)
+            details = error.get("details") or {}
+            available = details.get("available")
+            if available:
+                print("  available: " + ", ".join(str(a) for a in available),
+                      file=sys.stderr, flush=True)
+
+
+def _ok(payload: Dict[str, Any]) -> Dict[str, Any]:
+    out = {"ok": True}
+    out.update(payload)
+    return out
+
+
+def _abs_path(path: str) -> str:
+    """Resolve a user-supplied path to an absolute, forward-slash form.
+
+    The CLI resolves relative paths against the current directory because a
+    stored ``./fixtures/sample-repo`` would otherwise be re-resolved against
+    whatever directory the job worker happens to run in. This absolute path is
+    stored in the MACHINE-LOCAL sidecar only — it never reaches the portable
+    database or an exported artifact.
+    """
+    from . import walker
+    return walker.norm(os.path.abspath(os.path.expanduser(path)))
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+def cmd_doctor(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Non-destructive runtime diagnostics."""
+    from .runtime import get_runtime
+
+    runtime = get_runtime()
+    report = runtime.health.report()
+    payload = _ok(report.as_dict())
+    payload["runtime"] = runtime.info()
+
+    def human(_p: Dict[str, Any]) -> None:
+        print(f"OpenMind {report.version}")
+        print(f"  data dir:       {runtime.info()['data_dir']}")
+        print(f"  schema version: {runtime.info()['schema_version']}")
+        print()
+        for check in report.checks:
+            mark = {"ok": "  ok  ", "warn": " warn ", "error": "ERROR "}.get(
+                check.status, "  ?   ")
+            print(f"[{mark}] {check.name}: {check.detail}")
+        print()
+        failures, warnings = report.failures(), report.warnings()
+        if failures:
+            print(f"{len(failures)} problem(s) found.")
+        elif warnings:
+            print(f"No problems. {len(warnings)} warning(s) — "
+                  f"optional features are degraded or unconfigured.")
+        else:
+            print("All checks passed.")
+
+    out.emit(payload, human)
+    # Warnings never fail doctor: a missing optional local model must not make
+    # the whole command fail for someone who never asked for a model.
+    return (EXIT_DOMAIN_FAILURE if not report.ok else EXIT_OK), payload
+
+
+def cmd_init(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Create a workspace, optionally register a path and ingest it."""
+    from .runtime import get_runtime
+
+    runtime = get_runtime()
+    path = _abs_path(args.path) if args.path else None
+    if path and not os.path.isdir(path):
+        raise InvalidRequest(f"source path is not a directory: {path}",
+                             details={"path": path})
+
+    workspace = runtime.workspaces.create(args.name, path=path,
+                                          exclude=args.exclude or [])
+    out.say(f"Created workspace {workspace['id']} ({workspace['name']}).")
+    payload = _ok({"workspace_id": workspace["id"], "workspace": workspace})
+
+    if not args.ingest:
+        if path:
+            out.say(f"Registered source path: {path}")
+        out.say("Not ingesting (pass --ingest to learn this workspace now).")
+        out.emit(payload, lambda p: print(p["workspace_id"]))
+        return EXIT_OK, payload
+
+    code, ingest_payload = _run_ingest(runtime, out, workspace["id"], None,
+                                       args.wait, args.timeout)
+    # Merge the ingest outcome INCLUDING its ok flag: a workspace that was
+    # created but whose ingest failed or timed out must not report ok=true.
+    payload.update(ingest_payload)
+    payload["workspace_id"] = workspace["id"]
+    payload["workspace"] = workspace
+    out.emit(payload, lambda p: print(p["workspace_id"]))
+    return code, payload
+
+
+def cmd_add(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Register or update a source path on an existing workspace."""
+    from .runtime import get_runtime
+
+    runtime = get_runtime()
+    path = _abs_path(args.path)
+    if not os.path.isdir(path):
+        raise InvalidRequest(f"source path is not a directory: {path}",
+                             details={"path": path})
+
+    workspace = runtime.workspaces.add_path(args.workspace, path,
+                                            args.exclude or [])
+    out.say(f"Registered {path} on workspace {args.workspace}.")
+    payload = _ok({"workspace_id": workspace["id"], "workspace": workspace,
+                   "paths": workspace.get("paths", [])})
+
+    def human(p: Dict[str, Any]) -> None:
+        for spec in p["paths"]:
+            excludes = spec.get("exclude") or []
+            suffix = f"  (excluding {len(excludes)})" if excludes else ""
+            print(f"{spec['path']}{suffix}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_ingest(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Enqueue an ingest, optionally waiting for it."""
+    from .runtime import get_runtime
+
+    runtime = get_runtime()
+    code, payload = _run_ingest(runtime, out, args.workspace, args.path,
+                                args.wait, args.timeout)
+    # The job id is present on every path, including the timeout one — a
+    # timed-out job is still running and still pollable by id.
+    out.emit(payload, lambda p: print(p.get("job_id", "")))
+    return code, payload
+
+
+def _run_ingest(runtime: Any, out: Output, workspace_id: str,
+                path: Optional[str], wait: bool,
+                timeout: float) -> Tuple[int, Dict[str, Any]]:
+    """Shared by ``init --ingest`` and ``ingest``.
+
+    Returns (exit_code, payload) and deliberately does NOT emit: the caller owns
+    the single final ``out.emit`` call. Emitting here as well would put two JSON
+    objects on stdout and break the one-object contract.
+    """
+    if wait:
+        out.say("Starting the job worker...")
+
+    try:
+        result = runtime.ingest.start(workspace_id, path=path, wait=wait,
+                                      timeout=timeout)
+    except OperationTimeout as exc:
+        # The job is NOT cancelled — say so, and hand back the id to poll.
+        out.warn(str(exc))
+        payload = {"ok": False, "error": exc.as_dict()}
+        payload.update(exc.details)
+        return EXIT_TIMEOUT, payload
+
+    payload = _ok({"workspace_id": workspace_id, "job_id": result["job_id"],
+                   "job": result["job"], "waited": result["waited"]})
+
+    if not result["waited"]:
+        out.say(f"Queued ingest job {result['job_id']}.")
+        out.say("It runs in the background; poll it with "
+                f"'{PROG} status --workspace {workspace_id}'.")
+        return EXIT_OK, payload
+
+    status = result.get("status", "")
+    payload["status"] = status
+    payload["completed"] = result.get("completed", False)
+    payload["waited_seconds"] = result.get("waited_seconds")
+    progress = (result.get("job") or {}).get("progress") or {}
+    payload["progress"] = progress
+
+    if result.get("completed"):
+        out.say(f"Ingest finished in {result.get('waited_seconds')}s: "
+                f"{progress.get('files_indexed', 0)} file(s) indexed, "
+                f"{progress.get('chunks', 0)} chunk(s).")
+        return EXIT_OK, payload
+
+    # failed / paused / interrupted — all "did not complete", reported honestly.
+    error = (result.get("job") or {}).get("error") or ""
+    payload["ok"] = False
+    payload["error"] = {
+        "code": "job_failed",
+        "message": f"ingest job {result['job_id']} did not complete "
+                   f"(status: {status})" + (f": {error}" if error else ""),
+        "details": {"job_id": result["job_id"], "status": status},
+    }
+    out.warn(payload["error"]["message"])
+    return EXIT_JOB_FAILURE, payload
+
+
+def cmd_status(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Report workspace metadata, counts, jobs and the schema version."""
+    from .runtime import get_runtime
+
+    runtime = get_runtime()
+    status = runtime.workspaces.status(args.workspace)
+    jobs = runtime.jobs.list([args.workspace])
+    active = [j for j in jobs if j.get("status") in ("queued", "running")]
+
+    payload = _ok({
+        "workspace_id": args.workspace,
+        "workspace": status["workspace"],
+        "state": status["state"],
+        "paths": status["paths"],
+        "template": status["template"],
+        "counts": status["counts"],
+        "source_root": runtime.workspaces.source_root(args.workspace),
+        "active_jobs": active,
+        "recent_jobs": jobs[:args.jobs],
+        "schema_version": runtime.info()["schema_version"],
+        "version": runtime.version,
+    })
+
+    def human(p: Dict[str, Any]) -> None:
+        ws = p["workspace"]
+        print(f"{ws['name']}  ({ws['id']})")
+        print(f"  state:           {p['state']}")
+        print(f"  created:         {ws.get('created_at', '')}")
+        template = p["template"].get("effective")
+        source = p["template"].get("effective_source")
+        print(f"  template:        "
+              f"{template or 'none'}{f' ({source})' if template else ''}")
+        print(f"  schema version:  {p['schema_version']}")
+        print("  source paths:")
+        if not p["paths"]:
+            print("    (none registered)")
+        for spec in p["paths"]:
+            excludes = spec.get("exclude") or []
+            suffix = f"  [{len(excludes)} exclusion(s)]" if excludes else ""
+            print(f"    {spec['path']}{suffix}")
+        print("  counts:")
+        for label, key in (("indexed files", "indexed_files"),
+                           ("code chunks", "code_chunks"),
+                           ("glossary terms", "glossary_terms"),
+                           ("solved cases", "solved_cases")):
+            value = p["counts"].get(key)
+            # None means "could not read that store", NOT zero.
+            print(f"    {label:16} {'unknown' if value is None else value}")
+        if p["active_jobs"]:
+            print("  active jobs:")
+            for job in p["active_jobs"]:
+                print(f"    {job['job_id']}  {job['type']:8} {job['status']:8} "
+                      f"{job.get('step', '')}")
+        else:
+            print("  active jobs:     none")
+        if p["recent_jobs"]:
+            print("  recent jobs:")
+            for job in p["recent_jobs"]:
+                print(f"    {job['job_id']}  {job['type']:8} {job['status']:8} "
+                      f"{job.get('created_at', '')}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_export(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Generate the deterministic ``.openmind`` artifact directory.
+
+    Deliberately does NOT bootstrap the runtime: export is offline and
+    standalone, and must not open the database or the vector store.
+    """
+    from .services.export_service import ExportService
+
+    summary = ExportService().export(
+        args.repo, args.output, name=args.name, template=args.template,
+        no_template=args.no_template, generated_at=args.generated_at)
+    payload = _ok(dict(summary))
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"Open Mind artifacts written to {p['output']}")
+        print(f"  schema version:           {p['schemaVersion']}")
+        print(f"  repository:               {p['repository']['name']} "
+              f"(commit: {p['repository']['commit'] or 'n/a'})")
+        print(f"  template profile:         {p['template'] or 'none'}")
+        print(f"  files indexed:            {p['filesIndexed']}")
+        print(f"  symbols indexed:          {p['symbolsIndexed']}")
+        print(f"  glossary entries:         {p['glossaryEntries']}")
+        print(f"  architecture components:  {p['architectureComponents']}")
+        print(f"  flows:                    {p['flows']}")
+        print(f"  artifact files:           {', '.join(p['files'])}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_mcp_serve(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Run the MCP stdio server — the same implementation as
+    ``python -m openmind.mcp_server``, not a second copy of the tools."""
+    from .runtime import get_runtime
+
+    try:
+        from .mcp_server import create_mcp_server
+    except SystemExit as exc:
+        # mcp_server raises SystemExit when the 'mcp' package is absent.
+        raise DependencyUnavailable(str(exc) or "the 'mcp' package is required",
+                                    dependency="mcp") from exc
+
+    runtime = get_runtime()
+    # stderr only: stdout IS the MCP transport and must carry protocol frames.
+    out.say("Starting the OpenMind MCP server on stdio...")
+    server = create_mcp_server(runtime)
+    server.run()
+    return EXIT_OK, _ok({"served": "mcp"})
+
+
+def cmd_serve(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Run the FastAPI application."""
+    from . import config
+
+    host = args.host
+    if host.strip().lower() not in config.LOOPBACK_HOSTS and not args.allow_non_loopback:
+        # Never silently bind to a public interface: every prompt, path and
+        # snippet the API serves would be reachable from the network.
+        raise InvalidRequest(
+            f"refusing to bind to non-loopback host {host!r}. OpenMind serves "
+            f"project content and is loopback-only by default; pass "
+            f"--allow-non-loopback if you really intend to expose it.",
+            details={"host": host})
+
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise DependencyUnavailable(
+            "uvicorn is required to serve the web application "
+            "(pip install 'uvicorn[standard]')", dependency="uvicorn") from exc
+
+    out.say(f"Starting Open Mind on http://{host}:{args.port}  (Ctrl+C to stop)")
+    # timeout_graceful_shutdown: an open SSE job stream never completes on its
+    # own, so without a bound uvicorn waits forever on Ctrl+C.
+    uvicorn.run("openmind.main:app", host=host, port=args.port,
+                timeout_graceful_shutdown=5, log_level=(
+                    "debug" if args.verbose else "warning" if args.quiet else "info"))
+    return EXIT_OK, _ok({"served": "http", "host": host, "port": args.port})
+
+
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
+def _global_flags() -> argparse.ArgumentParser:
+    """Flags accepted both before and after the subcommand, so
+    ``openmind --json doctor`` and ``openmind doctor --json`` both work.
+
+    ``default=SUPPRESS`` is load-bearing. A shared parent parser is applied to
+    BOTH the top-level parser and every subparser, and both write into the same
+    namespace — so with an ordinary ``default=False`` the subparser would reset
+    a flag that was given before the subcommand, and ``openmind --quiet doctor``
+    would silently not be quiet. With SUPPRESS an unspecified flag sets nothing,
+    the earlier value survives, and :func:`build_parser` supplies the base
+    defaults once.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument("--json", action="store_true", dest="as_json",
+                        default=argparse.SUPPRESS,
+                        help="print one machine-readable JSON object on stdout")
+    parent.add_argument("--quiet", "-q", action="store_true",
+                        default=argparse.SUPPRESS,
+                        help="suppress human progress output")
+    parent.add_argument("--verbose", "-v", action="store_true",
+                        default=argparse.SUPPRESS,
+                        help="print extra diagnostics on stderr")
+    return parent
+
+
+def build_parser() -> argparse.ArgumentParser:
+    common = _global_flags()
+    parser = argparse.ArgumentParser(
+        prog=PROG, parents=[common],
+        description="OpenMind — a local, grounded engineering knowledge runtime. "
+                    "The web UI is optional: this CLI, the MCP server and the "
+                    "FastAPI app all drive the same runtime.",
+        epilog="Exit codes: 0 success, 1 domain failure, 2 invalid usage, "
+               "3 missing dependency, 4 job failure, 5 timeout.")
+    parser.add_argument("--version", action="version",
+                        version=f"{PROG} {RUNTIME_VERSION}")
+    # NOTE: deliberately no parser.set_defaults() for the global flags.
+    # set_defaults() rewrites action.default in place, and `parents=` SHARES
+    # Action objects with every subparser — so setting a default here would
+    # undo the SUPPRESS in _global_flags() and re-break `openmind --quiet
+    # doctor`. main() supplies the defaults with getattr instead.
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+
+    doctor = sub.add_parser("doctor", parents=[common],
+                            help="run non-destructive runtime diagnostics")
+    doctor.set_defaults(func=cmd_doctor)
+
+    init = sub.add_parser("init", parents=[common],
+                          help="create a workspace and optionally ingest it")
+    init.add_argument("--name", required=True, help="workspace display name")
+    init.add_argument("--path", help="source directory to register")
+    init.add_argument("--exclude", action="append", metavar="PATTERN",
+                      help="path to exclude (repeatable)")
+    init.add_argument("--ingest", action="store_true",
+                      help="ingest immediately after creating (off by default)")
+    init.add_argument("--wait", action="store_true",
+                      help="with --ingest, wait for the job to finish")
+    init.add_argument("--timeout", type=float, default=3600.0, metavar="SECONDS",
+                      help="bound for --wait (default: 3600)")
+    init.set_defaults(func=cmd_init)
+
+    add = sub.add_parser("add", parents=[common],
+                         help="register or update a source path")
+    add.add_argument("--workspace", required=True, help="workspace id")
+    add.add_argument("--path", required=True, help="source directory")
+    add.add_argument("--exclude", action="append", metavar="PATTERN",
+                     help="path to exclude (repeatable)")
+    add.set_defaults(func=cmd_add)
+
+    ingest = sub.add_parser("ingest", parents=[common],
+                            help="enqueue an ingest job")
+    ingest.add_argument("--workspace", required=True, help="workspace id")
+    ingest.add_argument("--path", help="restrict the ingest to this subtree")
+    ingest.add_argument("--wait", action="store_true",
+                        help="wait for the job to reach a terminal state")
+    ingest.add_argument("--timeout", type=float, default=3600.0, metavar="SECONDS",
+                        help="bound for --wait (default: 3600)")
+    ingest.set_defaults(func=cmd_ingest)
+
+    status = sub.add_parser("status", parents=[common],
+                            help="report workspace state, counts and jobs")
+    status.add_argument("--workspace", required=True, help="workspace id")
+    status.add_argument("--jobs", type=int, default=5, metavar="N",
+                        help="how many recent jobs to list (default: 5)")
+    status.set_defaults(func=cmd_status)
+
+    export = sub.add_parser("export", parents=[common],
+                            help="write the deterministic .openmind artifacts")
+    export.add_argument("--repo", required=True, help="repository root to analyze")
+    export.add_argument("--output", required=True, help="directory to write into")
+    export.add_argument("--name", help="repository display name")
+    export.add_argument("--generated-at", dest="generated_at", metavar="ISO8601",
+                        help="override generatedAt (reproducible builds)")
+    tgroup = export.add_mutually_exclusive_group()
+    tgroup.add_argument("--template", metavar="NAME",
+                        help="apply a named template profile "
+                             "(default: deterministic auto-selection)")
+    tgroup.add_argument("--no-template", dest="no_template", action="store_true",
+                        help="skip template profiles entirely")
+    export.set_defaults(func=cmd_export)
+
+    mcp = sub.add_parser("mcp", parents=[common],
+                         help="Model Context Protocol server")
+    mcp_sub = mcp.add_subparsers(dest="mcp_command", metavar="<subcommand>")
+    mcp_serve = mcp_sub.add_parser("serve", parents=[common],
+                                   help="run the MCP stdio server")
+    mcp_serve.set_defaults(func=cmd_mcp_serve)
+    mcp.set_defaults(func=None, _parser=mcp)
+
+    serve = sub.add_parser("serve", parents=[common],
+                           help="run the FastAPI web application")
+    serve.add_argument("--host", default="127.0.0.1",
+                       help="bind host (default: 127.0.0.1, loopback only)")
+    serve.add_argument("--port", type=int, default=8077, help="bind port")
+    serve.add_argument("--allow-non-loopback", dest="allow_non_loopback",
+                       action="store_true",
+                       help="permit binding to a non-loopback interface "
+                            "(exposes project content to the network)")
+    serve.set_defaults(func=cmd_serve)
+
+    return parser
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    out = Output(as_json=getattr(args, "as_json", False),
+                 quiet=getattr(args, "quiet", False),
+                 verbose=getattr(args, "verbose", False))
+
+    if not getattr(args, "command", None):
+        parser.print_help(sys.stderr)
+        return EXIT_INVALID_USAGE
+    if getattr(args, "func", None) is None:
+        # A group like `mcp` with no subcommand.
+        getattr(args, "_parser", parser).print_help(sys.stderr)
+        return EXIT_INVALID_USAGE
+
+    try:
+        code, _payload = args.func(args, out)
+        return code
+    except OpenMindError as exc:
+        out.emit_error(exc.as_dict())
+        return exc.exit_code
+    except KeyboardInterrupt:
+        out.emit_error({"code": "cancelled", "message": "cancelled by user"})
+        return EXIT_TIMEOUT
+    except BrokenPipeError:
+        # `openmind status --json | head` — not an error worth a traceback.
+        return EXIT_OK
+    except Exception as exc:
+        # Unexpected: report it as structured data too, and keep the traceback
+        # available behind --verbose rather than swallowing it.
+        out.emit_error({"code": "internal_error",
+                        "message": f"{type(exc).__name__}: {exc}"})
+        if out.verbose:
+            import traceback
+            traceback.print_exc()
+        return EXIT_DOMAIN_FAILURE
+
+
+if __name__ == "__main__":
+    sys.exit(main())

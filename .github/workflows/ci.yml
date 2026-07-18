@@ -6,7 +6,24 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Deterministic and offline for every job: the hashing embedder instead of a
+# downloaded model, and no enrichment or source-link egress. No job in this
+# workflow may call a paid API or a public LLM endpoint.
+env:
+  OPENMIND_EMBED_OFFLINE: "1"
+  OPENMIND_EMBED_DEVICE: cpu
+  OPENMIND_INGEST_FREE_GPU: "0"
+  OPENMIND_ENRICH_EGRESS: "0"
+  OPENMIND_SOURCELINK_EGRESS: "0"
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # The external integration contract, proven WITHOUT installing anything.
+  # Keeping this job dependency-free IS the guarantee: an external consumer
+  # (e.g. open-mind-mcp-server) can run the exporter with nothing but Python.
+  # ---------------------------------------------------------------------------
   artifact-contract:
     name: Artifact export contract (stdlib-only)
     runs-on: ubuntu-latest
@@ -31,3 +48,258 @@ jobs:
       # that external consumers (e.g. open-mind-mcp-server) depend on.
       - name: Verify artifact export contract
         run: python tests/verify_artifacts.py
+
+      # The CLI must reach that same contract with no dependencies installed.
+      - name: CLI export reproduces the contract (stdlib-only)
+        run: |
+          python -m openmind.cli export \
+            --repo ./fixtures/sample-repo \
+            --output ./.ci-openmind \
+            --json > export.json
+          python - <<'PY'
+          import json, pathlib
+          summary = json.load(open("export.json"))
+          assert summary["ok"] is True, summary
+          assert summary["schemaVersion"] == "1.1.0", summary["schemaVersion"]
+          manifest = json.load(open(".ci-openmind/manifest.json"))
+          assert manifest["schemaVersion"] == "1.1.0", manifest
+          assert manifest["generator"]["name"] == "open-mind", manifest
+          for name in ("glossary.json", "architecture.json", "flows.json",
+                       "source-index.json", "metadata.json"):
+              assert pathlib.Path(".ci-openmind", name).is_file(), name
+          print("artifact contract OK:", manifest["schemaVersion"])
+          PY
+
+  # ---------------------------------------------------------------------------
+  # The full gate. Everything that must be green before main moves.
+  # ---------------------------------------------------------------------------
+  full-gate:
+    name: Full gate (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Byte-compile package
+        run: python -m compileall -q openmind
+
+      # Cheap, high-signal checks first, so an obvious breakage fails in
+      # seconds instead of after the whole suite.
+      - name: Migration tests
+        run: python scripts/run_acceptance.py --only verify_migrations
+
+      - name: CLI tests
+        run: python scripts/run_acceptance.py --only verify_cli
+
+      - name: MCP smoke test
+        run: |
+          python - <<'PY'
+          import asyncio, os, tempfile
+          os.environ["OPENMIND_DATA_DIR"] = tempfile.mkdtemp()
+          os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
+          from openmind import mcp_server
+          from openmind.runtime import get_runtime
+
+          expected = {"search", "route", "dispatch", "get_glossary",
+                      "find_similar_cases", "save_case", "get_doc",
+                      "propose_fix", "apply_fix"}
+          server = mcp_server.create_mcp_server(get_runtime())
+          names = {t.name for t in asyncio.run(server.list_tools())}
+          assert names == expected, f"MCP tool drift: {names ^ expected}"
+          assert server.name == "open-mind", server.name
+          print("MCP smoke OK:", len(names), "tools")
+          PY
+
+      - name: Skill bridge smoke test
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          proc = subprocess.Popen(
+              [sys.executable, "-m", "openmind.skill_bridge",
+               "--root", "./fixtures/sample-repo"],
+              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+          try:
+              ready = json.loads(proc.stdout.readline())
+              assert ready.get("ready") is True, ready
+              assert ready.get("files", 0) > 0, ready
+              proc.stdin.write(json.dumps(
+                  {"id": 1, "op": "route", "arg": "what does ISR mean"}) + "\n")
+              proc.stdin.flush()
+              reply = json.loads(proc.stdout.readline())
+              assert reply.get("ok") is True, reply
+              assert reply["result"]["capability"], reply
+              print("skill bridge smoke OK:", ready["files"], "files")
+          finally:
+              proc.stdin.close()
+              proc.wait(timeout=30)
+          PY
+
+      # The whole supported suite. Every tests/verify_*.py must be registered in
+      # the runner's manifest, so a new test cannot go silently unrun, and a
+      # skipped core script is counted as a failure rather than a pass.
+      - name: Acceptance suite (core tier)
+        run: python scripts/run_acceptance.py --json > acceptance.json
+
+      - name: Upload acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-report
+          path: acceptance.json
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Cross-platform smoke. Deliberately light: no embedding-heavy ingest on three
+  # operating systems, just proof that the package imports and the tool-first
+  # entry points work everywhere.
+  # ---------------------------------------------------------------------------
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Package imports
+        run: python -c "import openmind; print('openmind', openmind.__version__)"
+
+      - name: CLI --version
+        run: python -m openmind.cli --version
+
+      - name: CLI doctor --json
+        shell: bash
+        run: |
+          python -m openmind.cli doctor --json > doctor.json
+          python - <<'PY'
+          import json
+          report = json.load(open("doctor.json"))
+          names = {c["name"] for c in report["checks"]}
+          for required in ("data_dir", "database", "migrations", "project_dirs",
+                           "vectorstore", "embeddings", "mcp", "runtime_version"):
+              assert required in names, f"missing check: {required}"
+          # A missing optional local model must never fail doctor.
+          assert report["ok"] is True, report
+          print("doctor OK:", report["version"], report["status"])
+          PY
+
+      - name: Artifact export contract
+        run: python tests/verify_artifacts.py
+
+      - name: Skill bridge startup
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          proc = subprocess.Popen(
+              [sys.executable, "-m", "openmind.skill_bridge",
+               "--root", "./fixtures/sample-repo"],
+              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+          try:
+              ready = json.loads(proc.stdout.readline())
+              assert ready.get("ready") is True, ready
+              print("skill bridge startup OK:", ready["files"], "files")
+          finally:
+              proc.stdin.close()
+              proc.wait(timeout=30)
+          PY
+
+  # ---------------------------------------------------------------------------
+  # Optional: run the independent Agent Skill Verification Template against the
+  # REAL OpenMind implementation via the skill bridge.
+  #
+  # This job never downloads an unpinned repository. It runs only when the
+  # template is provided deliberately, through the AGENT_SKILL_VERIFICATION_REF
+  # repository variable in explicit 'owner/repo@ref' form. Without it the job
+  # reports "not configured" and does NOT claim the verification ran.
+  #
+  # A future phase will use Agent Skill Forge to generate the v2 workflow
+  # Skills; this job is the seam for running them, not those Skills.
+  # ---------------------------------------------------------------------------
+  skill-verification:
+    name: Agent Skill Verification (optional)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    steps:
+      - name: Checkout OpenMind
+        uses: actions/checkout@v4
+        with:
+          path: open-mind
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: open-mind/requirements.txt
+
+      - name: Install dependencies
+        working-directory: open-mind
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check out the verification template (pinned ref only)
+        id: template
+        env:
+          TEMPLATE_REF: ${{ vars.AGENT_SKILL_VERIFICATION_REF }}
+        run: |
+          if [ -z "${TEMPLATE_REF}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "AGENT_SKILL_VERIFICATION_REF is not set."
+            echo "Set it to 'owner/repo@ref' to enable this job."
+            exit 0
+          fi
+          repo="${TEMPLATE_REF%@*}"
+          ref="${TEMPLATE_REF##*@}"
+          if [ "${repo}" = "${ref}" ]; then
+            echo "::error::AGENT_SKILL_VERIFICATION_REF must be 'owner/repo@ref' (a pinned ref); got '${TEMPLATE_REF}'."
+            exit 1
+          fi
+          git clone --filter=blob:none --no-checkout "https://github.com/${repo}.git" template
+          git -C template fetch --depth 1 origin "${ref}"
+          git -C template checkout FETCH_HEAD
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Report that verification is not configured
+        if: steps.template.outputs.available != 'true'
+        run: |
+          echo "Agent Skill Verification did NOT run (template not configured)."
+          echo "This step is a no-op, NOT a pass for the skill suite."
+
+      - name: Run the verification suite against the real implementation
+        if: steps.template.outputs.available == 'true'
+        working-directory: template
+        env:
+          OPENMIND_ROOT: ${{ github.workspace }}/open-mind
+        run: |
+          npm ci
+          npm run eval:openmind
