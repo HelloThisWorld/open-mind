@@ -2,6 +2,18 @@
 
 LOCAL-ONLY: the server binds to 127.0.0.1 by default; the only outbound HTTP is
 the local LLM call (via netguard). See /netlog for the outbound audit trail.
+
+ONE ADAPTER AMONG SEVERAL
+-------------------------
+This module is no longer where application behaviour is defined. Workspace,
+path, ingest, job, lifecycle and health use cases live in
+:mod:`openmind.services` and are shared with the CLI and the MCP server; the
+routes below validate HTTP input, call one service, and shape the response.
+
+Routes that are already a thin call into a deterministic query module (glossary,
+structure, graphs, source navigation, Ask) deliberately keep calling it
+directly: routing a one-line query through a service method would add
+indirection without adding a seam.
 """
 from __future__ import annotations
 
@@ -21,7 +33,10 @@ from . import (ask as askmod, cases, config, conversation, db, diagrams,
                docs as docsmod, embeddings, fs_tree, glossary, jobs, llm_client,
                machine, mapio, models, netguard, rag, router, scope, structure,
                sysload, templates, vectorstore, walker)
+from .domain.errors import OpenMindError
 from .model_server import server as model_server
+from .runtime import get_runtime
+from .version import RUNTIME_VERSION
 
 
 def _sweep_orphan_project_dirs() -> List[str]:
@@ -74,33 +89,55 @@ def _warm_vectorstore() -> None:
 async def _lifespan(app: FastAPI):
     # lifespan (not deprecated on_event) so the background job worker reliably
     # starts under every server/runtime — otherwise jobs would sit queued.
-    config.ensure_dirs()
-    db.init_db()
+    # bootstrap() is the SAME path the CLI and the MCP server take: ensure dirs,
+    # open the database, migrate to head, build the services.
+    runtime = get_runtime()
     # sweep leaked HNSW segment dirs FIRST — it reads chroma.sqlite3 with a raw
     # (read-only) connection, which is only safe while NO chroma client exists
     # in this process (start_worker may spawn delete-cleanup threads that open
-    # one; racing the rust bindings here deadlocks GIL <-> sqlite lock).
+    # one; racing the rust bindings here deadlocks GIL <-> sqlite lock). This
+    # stays here rather than in bootstrap(): it is a long-lived-server concern,
+    # and running it from a short-lived CLI process beside a live server would
+    # be unsafe.
     swept = vectorstore.sweep_orphan_segment_dirs()
     if swept:
         print(f"[startup] removed {len(swept)} leaked vector segment dir(s).",
               flush=True)
-    jobs.start_worker()
+    # The worker is opt-in per surface; the web app always needs one.
+    runtime.ensure_worker()
     threading.Thread(target=_warm_vectorstore, name="vs-warmup", daemon=True).start()
     yield
     # shutdown: stop background delete-cleanup at its next batch so Ctrl+C
     # exits promptly; 'deleting' tombstones resume on the next start.
-    jobs.begin_shutdown()
+    runtime.shutdown()
 
 
 # docs_url disabled: the spec reserves GET /docs and /docs/{page} for the
 # generated knowledge-base docs (not Swagger UI). OpenAPI JSON stays available.
-app = FastAPI(title="Open Mind", version="0.1.0",
+app = FastAPI(title="Open Mind", version=RUNTIME_VERSION,
               docs_url=None, redoc_url=None, lifespan=_lifespan)
+
+
+@app.exception_handler(OpenMindError)
+async def _application_error(_request: Request, exc: OpenMindError) -> JSONResponse:
+    """Map a service-layer error onto its HTTP status.
+
+    Services raise typed errors rather than HTTPException so the CLI and MCP can
+    map the same failure their own way. ``detail`` keeps the shape FastAPI's own
+    HTTPException produces, so existing clients see no difference; ``error``
+    carries the machine-readable code alongside it.
+    """
+    return JSONResponse(status_code=exc.http_status,
+                        content={"detail": exc.message, "error": exc.as_dict()})
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+#: The shared application services. Same container the CLI and MCP server use.
+_svc = get_runtime
+
+
 def _scope_pids(scope_id: Optional[str]) -> List[str]:
     pids = scope.resolve(scope_id)
     if not pids:
@@ -117,8 +154,19 @@ def index() -> FileResponse:
 
 
 @app.get("/api/health")
-def api_health() -> Dict[str, Any]:
-    return {
+def api_health(diagnostics: bool = False) -> Dict[str, Any]:
+    """Liveness + backend summary.
+
+    ADDITIVE ONLY: every key this returned before is unchanged. ``version`` and
+    ``schema_version`` are new and cheap.
+
+    The full ``doctor`` report is behind ``?diagnostics=1`` rather than always
+    included: it probes the model endpoint with a timeout, stats the disk, and
+    writes a temp file to prove the data dir is writable. That is right for an
+    on-demand diagnostic and wrong for a liveness endpoint a monitor may poll.
+    """
+    runtime = _svc()
+    payload = {
         "ok": True,
         "embeddings_backend": embeddings.backend_name(),
         "vectorstore_backend": vectorstore.backend_name(),
@@ -126,7 +174,12 @@ def api_health() -> Dict[str, Any]:
         "llm_local": llm_client.is_local_endpoint(),
         "outbound_calls_logged": len(netguard.get_log(1000)),
         "server": model_server.status()["status"],
+        "version": RUNTIME_VERSION,
+        "schema_version": runtime.info()["schema_version"],
     }
+    if diagnostics:
+        payload["diagnostics"] = runtime.health.summary()
+    return payload
 
 
 @app.get("/netlog")
@@ -147,48 +200,42 @@ def system_load() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 @app.get("/projects")
 def list_projects(state: Optional[str] = None) -> Dict[str, Any]:
-    return {"projects": db.list_projects(state)}
+    return {"projects": _svc().workspaces.list(state)}
 
 
 @app.post("/projects")
 def create_project(req: models.CreateProjectReq) -> Dict[str, Any]:
-    p = db.create_project(req.name)
-    if req.path:
-        db.upsert_project_path(p["id"], req.path, req.exclude)
-    return db.get_project(p["id"])
+    return _svc().workspaces.create(req.name, path=req.path, exclude=req.exclude)
 
 
 @app.get("/projects/{project_id}")
 def get_project(project_id: str) -> Dict[str, Any]:
-    p = db.get_project(project_id)
-    if not p:
-        raise HTTPException(404, "project not found")
-    p["code_chunks"] = vectorstore.get_code_store(project_id).count()
-    p["cases_count"] = vectorstore.get_cases_store(project_id).count()
-    p["files_indexed"] = len(db.get_file_index(project_id))
-    return p
+    return _svc().workspaces.describe(project_id)
 
 
 @app.post("/projects/{project_id}/paths")
 def add_path(project_id: str, req: models.AddPathReq) -> Dict[str, Any]:
-    if not db.get_project(project_id):
-        raise HTTPException(404, "project not found")
-    db.upsert_project_path(project_id, req.path, req.exclude)
-    return db.get_project(project_id)
+    return _svc().workspaces.add_path(project_id, req.path, req.exclude)
 
 
 @app.post("/projects/{project_id}/selection")
 def save_selection(project_id: str, req: models.SaveSelectionReq) -> Dict[str, Any]:
-    if not db.get_project(project_id):
-        raise HTTPException(404, "project not found")
-    db.upsert_project_path(project_id, req.path, req.exclude)
-    return db.get_project(project_id)
+    """Persist the folder selection (path + exclude-set). Same operation as
+    /paths; kept as a separate route because the UI's selection panel posts
+    here."""
+    return _svc().workspaces.add_path(project_id, req.path, req.exclude)
 
 
 @app.delete("/projects/{project_id}/paths")
 def remove_path(project_id: str, path: str) -> Dict[str, Any]:
-    db.remove_project_path(project_id, path)
-    return db.get_project(project_id)
+    """Remove one source path.
+
+    BEHAVIOUR FIX: this used to call straight through to the database and return
+    ``None`` for an unknown project. Since the handler is annotated
+    ``-> Dict[str, Any]``, FastAPI's response validation turned that into a
+    500 ResponseValidationError. It now 404s like every sibling route.
+    """
+    return _svc().workspaces.remove_path(project_id, path)
 
 
 @app.get("/templates")
@@ -204,10 +251,7 @@ def list_templates() -> Dict[str, Any]:
 def get_project_template(project_id: str) -> Dict[str, Any]:
     """This project's template selection: the user override, the auto-selection
     recorded at learn time, and which one is effective."""
-    p = db.get_project(project_id)
-    if not p:
-        raise HTTPException(404, "project not found")
-    return templates.selection_info(p)
+    return _svc().workspaces.template_selection(project_id)
 
 
 @app.post("/projects/{project_id}/template")
@@ -215,20 +259,7 @@ def set_project_template(project_id: str, req: models.SetTemplateReq) -> Dict[st
     """Set (or clear, with name=null) the project's template override. The name
     must resolve to a valid template at write time — a typo fails HERE, not
     silently at the next learn."""
-    p = db.get_project(project_id)
-    if not p:
-        raise HTTPException(404, "project not found")
-    name = (req.name or "").strip().lower()
-    meta = dict(p.get("meta") or {})
-    if name:
-        if not templates.get_template(name):
-            raise HTTPException(400, f"unknown or invalid template: {name!r} "
-                                     "(GET /templates lists what is available)")
-        meta["template"] = name
-    else:
-        meta.pop("template", None)
-    db.update_project_meta(project_id, meta)
-    return templates.selection_info(db.get_project(project_id))
+    return _svc().workspaces.set_template(project_id, req.name)
 
 
 @app.post("/projects/{project_id}/source-link")
@@ -261,9 +292,7 @@ def set_source_link(project_id: str, req: models.SourceLinkReq) -> Dict[str, Any
 
 @app.post("/projects/{project_id}/terminate")
 def terminate(project_id: str, req: models.TerminateReq) -> Dict[str, Any]:
-    if not db.get_project(project_id):
-        raise HTTPException(404, "project not found")
-    return jobs.terminate_project(project_id, clear_cases=req.clear_cases)
+    return _svc().workspaces.terminate(project_id, clear_cases=req.clear_cases)
 
 
 @app.delete("/projects/{project_id}")
@@ -271,9 +300,7 @@ def delete_project(project_id: str) -> Dict[str, Any]:
     """Permanently remove the project. Returns IMMEDIATELY ({deleting}); the project
     vanishes from the listing at once and its storage is reclaimed in the background
     so the UI never freezes on a large project."""
-    if not db.get_project(project_id):
-        raise HTTPException(404, "project not found")
-    return jobs.request_delete(project_id)
+    return _svc().workspaces.request_delete(project_id)
 
 
 @app.get("/scope/{scope_id}")
@@ -379,17 +406,20 @@ def server_status() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 @app.post("/ingest")
 def ingest(req: models.IngestReq) -> Dict[str, Any]:
-    if not db.get_project(req.project_id):
-        raise HTTPException(404, "project not found")
-    job = jobs.enqueue_ingest(req.project_id, req.path)
+    # Enqueue-only, exactly as before: the HTTP client polls /jobs or the SSE
+    # stream. The service's path-registration guard is deliberately NOT applied
+    # here — it would turn a currently-accepted request into a 400.
+    runtime = _svc()
+    runtime.workspaces.get(req.project_id)          # 404 for an unknown project
+    job = runtime.jobs.enqueue_ingest(req.project_id, req.path)
     return {"job_id": job["job_id"], "job": job}
 
 
 @app.post("/gendocs")
 def gendocs(req: models.GendocsReq) -> Dict[str, Any]:
-    if not db.get_project(req.project_id):
-        raise HTTPException(404, "project not found")
-    job = jobs.enqueue_gendocs(req.project_id)
+    runtime = _svc()
+    runtime.workspaces.get(req.project_id)
+    job = runtime.jobs.enqueue_gendocs(req.project_id)
     return {"job_id": job["job_id"], "job": job}
 
 
@@ -400,41 +430,31 @@ def gendocs(req: models.GendocsReq) -> Dict[str, Any]:
 def list_jobs(scope_id: Optional[str] = Query(None, alias="scope")) -> Dict[str, Any]:
     pids = None
     if scope_id:
+        # '__none__' is a sentinel that matches no project, so an unresolvable
+        # scope lists nothing instead of silently listing EVERY project's jobs.
         pids = scope.resolve(scope_id) or ["__none__"]
-    return {"jobs": db.list_jobs(project_ids=pids)}
+    return {"jobs": _svc().jobs.list(pids)}
 
 
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> Dict[str, Any]:
-    j = db.get_job(job_id)
-    if not j:
-        raise HTTPException(404, "job not found")
-    return j
+    return _svc().jobs.get(job_id)
 
 
 @app.post("/jobs/{job_id}/pause")
 def pause_job(job_id: str) -> Dict[str, Any]:
-    try:
-        return jobs.pause(job_id)
-    except KeyError:
-        raise HTTPException(404, "job not found")
+    return _svc().jobs.pause(job_id)
 
 
 @app.post("/jobs/{job_id}/resume")
 def resume_job(job_id: str) -> Dict[str, Any]:
-    try:
-        return jobs.resume(job_id)
-    except KeyError:
-        raise HTTPException(404, "job not found")
+    return _svc().jobs.resume(job_id)
 
 
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> Dict[str, Any]:
     """Cancel a queued/running job (used by the Ask queue; Part 2)."""
-    try:
-        return jobs.cancel_job(job_id)
-    except KeyError:
-        raise HTTPException(404, "job not found")
+    return _svc().jobs.cancel(job_id)
 
 
 @app.get("/jobs/{job_id}/stream")

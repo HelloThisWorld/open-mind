@@ -2,26 +2,43 @@
 
 Exposes the read/query surface a client (your editor, agent, or the CLI) needs —
 all in-process, all local:
-  search, get_glossary, find_similar_cases, save_case, get_doc, propose_fix,
-  apply_fix.
+  search, route, dispatch, get_glossary, find_similar_cases, save_case, get_doc,
+  propose_fix, apply_fix.
 
 Run:  python -m openmind.mcp_server
-(register this command as an MCP stdio server in your client).
+      openmind mcp serve            (identical; the CLI calls straight into here)
+(register either command as an MCP stdio server in your client).
+
+CONSTRUCTION
+------------
+The tools are plain module-level functions collected in :data:`TOOLS`, and
+:func:`create_mcp_server` registers them on a fresh ``FastMCP``. That means a
+test can build a server and inspect its tool set without the import of this
+module having already opened a database — the import-time ``db.init_db()`` this
+module used to run is now the runtime's job, done once per process by the shared
+bootstrap.
+
+The module-level ``mcp`` object is still available and is created on first
+attribute access, so anything that referenced it keeps working.
+
+The tools themselves are deliberately NOT routed through the application
+services: they are pure, deterministic queries over the glossary, structure,
+cases and RAG modules. Wrapping a one-line query module call in a service method
+would add indirection without adding a seam.
 """
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from . import cases, codemod, db, docs as docsmod, glossary, machine, mapio, rag, router, scope
+from . import cases, codemod, docs as docsmod, glossary, machine, mapio, rag, router, scope
 
 try:
     from mcp.server.fastmcp import FastMCP
 except Exception as exc:  # pragma: no cover
     raise SystemExit("The 'mcp' package is required: pip install mcp\n" + str(exc))
 
-db.init_db()
-mcp = FastMCP("open-mind")
+SERVER_NAME = "open-mind"
 
 
 def _pids(scope_id: str) -> List[str]:
@@ -44,9 +61,12 @@ def _anchor(file_path: str, scope_id: Optional[str]) -> str:
     return file_path
 
 
-@mcp.tool()
+# ---------------------------------------------------------------------------
+# Tools — argument and response contracts are STABLE; external clients depend
+# on them. Changing a name or a returned key is a breaking change.
+# ---------------------------------------------------------------------------
 def search(scope: str, query: str, k: int = 12, case_sensitive: bool = True,
-          subword: bool = False) -> Dict[str, Any]:
+           subword: bool = False) -> Dict[str, Any]:
     """Hybrid code search (cases-first, then RAG). scope = project id.
 
     A bare identifier/literal query is matched as an EXACT token (token-boundary;
@@ -55,7 +75,8 @@ def search(scope: str, query: str, k: int = 12, case_sensitive: bool = True,
     also match camelCase/snake_case components; case_sensitive=False to ignore case."""
     pids = _pids(scope)
     case_hits = cases.search_cases(pids, query, k=5)
-    result = rag.retrieve(pids, query, k=k, case_sensitive=case_sensitive, subword=subword)
+    result = rag.retrieve(pids, query, k=k, case_sensitive=case_sensitive,
+                          subword=subword)
     return {
         "case_hits": case_hits,
         "case_shortcircuit": any(c.get("similarity", 0) >= 0.65 for c in case_hits),
@@ -65,7 +86,6 @@ def search(scope: str, query: str, k: int = 12, case_sensitive: bool = True,
     }
 
 
-@mcp.tool()
 def route(query: str) -> Dict[str, Any]:
     """Agent-style capability routing with deterministic graceful degradation.
 
@@ -76,14 +96,12 @@ def route(query: str) -> Dict[str, Any]:
     return router.route(query)
 
 
-@mcp.tool()
 def dispatch(scope: str, query: str) -> Dict[str, Any]:
     """Route the query to one capability and INVOKE it; returns the result plus the
     routing trace. Each capability is deterministic/grounded; the router only chooses."""
     return router.dispatch(_pids(scope), query)
 
 
-@mcp.tool()
 def get_glossary(scope: str, term: Optional[str] = None) -> Dict[str, Any]:
     """Deterministic term/acronym resolution from the persisted glossary map.
 
@@ -95,13 +113,11 @@ def get_glossary(scope: str, term: Optional[str] = None) -> Dict[str, Any]:
     return glossary.get_glossary(mapio.merged_glossary(_pids(scope)), term)
 
 
-@mcp.tool()
 def find_similar_cases(problem: str, scope: str, k: int = 5) -> Dict[str, Any]:
     """Search the solved-cases store for similar problems (with staleness flags)."""
     return {"cases": cases.search_cases(_pids(scope), problem, k=k)}
 
 
-@mcp.tool()
 def save_case(scope: str, problem_text: str, resolution_summary: str,
               involved_services: Optional[List[str]] = None,
               involved_topics: Optional[List[str]] = None,
@@ -118,7 +134,6 @@ def save_case(scope: str, problem_text: str, resolution_summary: str,
     })
 
 
-@mcp.tool()
 def get_doc(page: str, scope: str) -> Dict[str, Any]:
     """Fetch a generated documentation page (markdown) with its sync status."""
     doc = docsmod.get_doc(_pids(scope), page)
@@ -127,7 +142,6 @@ def get_doc(page: str, scope: str) -> Dict[str, Any]:
     return doc
 
 
-@mcp.tool()
 def propose_fix(file_path: str, find: str, replace: str,
                 scope: Optional[str] = None) -> Dict[str, Any]:
     """Preview a SMALL literal find/replace edit as a unified diff. Writes
@@ -138,7 +152,6 @@ def propose_fix(file_path: str, find: str, replace: str,
     return codemod.propose(_anchor(file_path, scope), find, replace)
 
 
-@mcp.tool()
 def apply_fix(file_path: str, find: str, replace: str, test_cmd: str,
               cwd: Optional[str] = None, scope: Optional[str] = None) -> Dict[str, Any]:
     """Apply a literal find/replace ONLY if it keeps the test suite green.
@@ -152,8 +165,61 @@ def apply_fix(file_path: str, find: str, replace: str, test_cmd: str,
     return codemod.apply_fix(_anchor(file_path, scope), find, replace, test_cmd, cwd=cwd)
 
 
+#: The published tool set, in registration order. The names are the MCP tool
+#: names clients call.
+TOOLS: List[Callable[..., Any]] = [
+    search, route, dispatch, get_glossary, find_similar_cases, save_case,
+    get_doc, propose_fix, apply_fix,
+]
+
+TOOL_NAMES = tuple(fn.__name__ for fn in TOOLS)
+
+
+# ---------------------------------------------------------------------------
+# Construction
+# ---------------------------------------------------------------------------
+def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
+    """Build a ``FastMCP`` server exposing :data:`TOOLS`.
+
+    *runtime* is an :class:`~openmind.runtime.OpenMindRuntime`; when omitted the
+    process-wide one is created and bootstrapped. Bootstrapping here (rather than
+    at import time) is what makes the module importable in a test without opening
+    a database, while still guaranteeing that a served process has run its
+    migrations.
+    """
+    if runtime is None:
+        from .runtime import get_runtime
+        get_runtime()
+    else:
+        runtime.bootstrap()
+
+    server = FastMCP(SERVER_NAME)
+    for fn in TOOLS:
+        server.tool()(fn)
+    return server
+
+
+_mcp: Optional[FastMCP] = None
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily provide the module-level ``mcp`` server.
+
+    PEP 562 module ``__getattr__``: ``mcp_server.mcp`` still resolves for anyone
+    who referenced it, but merely importing this module no longer builds a
+    server or touches the database.
+    """
+    if name == "mcp":
+        global _mcp
+        if _mcp is None:
+            _mcp = create_mcp_server()
+        return _mcp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def main() -> None:
-    mcp.run()
+    from .runtime import get_runtime
+    create_mcp_server(get_runtime()).run()
 
 
 if __name__ == "__main__":

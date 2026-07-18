@@ -260,19 +260,60 @@ an AI agent can inspect, cite, and act on.
 
 **Prerequisites:** Python 3.12+ on Windows, macOS, or Linux.
 
-```powershell
+```bash
 git clone https://github.com/HelloThisWorld/open-mind.git
 cd open-mind
 pip install -r requirements.txt
-
-# Web UI + REST API on http://127.0.0.1:8077
-./run.ps1
 ```
 
-Cross-platform launch:
+Open Mind is a **headless runtime with several front ends**. The CLI, the MCP
+server and the FastAPI app all drive the same code — the web UI is one adapter
+over the runtime, not the place behaviour is defined, and it is entirely
+optional.
+
+### Tool-first (no UI)
 
 ```bash
-python -m uvicorn openmind.main:app --host 127.0.0.1 --port 8077
+# check the runtime: data dir, database, schema version, backends
+python -m openmind.cli doctor
+
+# create a workspace over a local repository
+python -m openmind.cli init --name demo --path ./fixtures/sample-repo
+
+# learn it (incremental; unchanged files are skipped by content hash)
+python -m openmind.cli ingest --workspace <id> --wait
+
+# what does it know?
+python -m openmind.cli status --workspace <id>
+
+# expose the knowledge layer to an editor or agent over MCP
+python -m openmind.cli mcp serve
+
+# ...or start the optional web UI
+python -m openmind.cli serve
+```
+
+Every command takes `--json` for one machine-readable object on stdout, with
+diagnostics on stderr and [stable exit codes](docs/cli.md#exit-codes), so the
+runtime scripts cleanly:
+
+```bash
+WS=$(python -m openmind.cli init --name demo --path ./src --json | jq -r .workspace_id)
+python -m openmind.cli ingest --workspace "$WS" --wait --json | jq '.progress'
+python -m openmind.cli status --workspace "$WS" --json | jq '.counts'
+```
+
+Full contract: **[docs/cli.md](docs/cli.md)**.
+
+### Web UI
+
+```powershell
+./run.ps1                              # Windows
+```
+
+```bash
+python -m openmind.cli serve           # cross-platform
+python -m uvicorn openmind.main:app --host 127.0.0.1 --port 8077   # equivalent
 ```
 
 Then open `http://127.0.0.1:8077`, create a project, select a local repository,
@@ -280,14 +321,37 @@ and start learning. The deterministic glossary, graph, and exact-token search
 features do not require an LLM. Ask/Q&A uses an optional local
 OpenAI-compatible `llama-server`.
 
+The server binds to loopback by default and refuses a non-loopback bind unless
+you pass `--allow-non-loopback` explicitly.
+
+### Things worth knowing
+
+* **The UI is optional.** Nothing in the CLI or MCP path needs it running.
+* **One runtime, one bootstrap.** CLI, MCP and FastAPI share the same
+  configuration, database connection, migrations and services, so a workspace
+  created in one is immediately visible in the others.
+* **`--workspace` is the project id.** The stored entity is still a *project*
+  and the REST API still says `/projects`; "workspace" is internal vocabulary
+  that a later phase will build on. Nothing about the stored shape changed.
+* **The artifact schema is stable.** `.openmind` export stays at schema **1.x**;
+  external consumers keep working. Export is standalone — it needs no database,
+  vector store or model, and runs with nothing but the standard library.
+* **Schema changes are migrations.** The database carries a version and upgrades
+  itself; an existing project database is baselined, never recreated. See
+  [docs/database-migrations.md](docs/database-migrations.md).
+* Enterprise Asset and Knowledge Graph models are **future v2 work** and are not
+  implemented — see [Roadmap](#roadmap).
+
 ---
 
 ## Use It From An Agent (MCP)
 
-Open Mind ships an MCP stdio server:
+Open Mind ships an MCP stdio server. Either command starts the same server —
+they share one implementation, not two copies of the tools:
 
 ```bash
 python -m openmind.mcp_server
+python -m openmind.cli mcp serve
 ```
 
 Example client registration:
@@ -489,6 +553,14 @@ under the template's `reports/` directory.
 
 ```text
 openmind/
+  cli.py           the command-line front end (argparse; JSON + exit codes)
+  runtime.py       composition root: one idempotent bootstrap for every adapter
+  version.py       the single runtime version constant
+  domain/          typed application errors + the types crossing service calls
+  ports/           the three narrow boundaries services depend on
+  services/        use-case orchestration shared by CLI, MCP and FastAPI
+                   (workspace, ingest, job, export, health + the container)
+  migrations/      versioned, checksummed SQLite schema migrations
   walker.py        selection-aware walk, .gitignore handling, hashing
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
@@ -513,7 +585,7 @@ openmind/
   artifacts.py     .openmind artifact export (the stable integration contract)
   mcp_server.py    MCP stdio server
   skill_bridge.py  JSON-lines bridge exposing the skills to the eval harness
-  main.py          FastAPI REST/SSE API and single-page UI
+  main.py          FastAPI REST/SSE API and single-page UI (one adapter)
   netguard.py      audited outbound HTTP guard for app-controlled egress
   machine.py       machine-local source roots and GitHub source links
   jobs.py          resumable background jobs for ingest, Ask, enrichment
@@ -584,7 +656,23 @@ Two layers of checks back the claims in this README.
 results and reproduction steps.
 
 **Focused acceptance scripts** — small checks covering the verification
-contracts implemented in this build:
+contracts implemented in this build. One command runs the supported suite:
+
+```bash
+python scripts/run_acceptance.py           # the CI gate (core tier)
+python scripts/run_acceptance.py --all     # every tier, including local-only
+python scripts/run_acceptance.py --list    # what is in the suite, and why
+python scripts/run_acceptance.py --only verify_migrations
+```
+
+The runner gives each script its own isolated `OPENMIND_DATA_DIR` and
+`OPENMIND_MACHINE_DIR`, forces offline embeddings and disables all egress, and
+returns non-zero on any failure. Two properties are deliberate: **a skipped
+core script is counted as a failure**, never a pass, and **every
+`tests/verify_*.py` on disk must be registered in the runner's manifest** — so a
+new test cannot silently go unrun while the suite still reports green.
+
+The individual scripts, each mapping to a concrete reliability claim:
 
 ```bash
 python tests/verify_artifacts.py      # .openmind artifact contract: schema, evidence, determinism
@@ -599,21 +687,46 @@ python tests/verify_facets.py         # template facets: roles, captures, projec
 python tests/verify_guide.py          # learning guide: cited pages, notes preservation, honest reset
 python tests/verify_grounding.py      # glossary-first Ask routing, honest miss/empty sources
 python tests/verify.py                # 12 cross-cutting design invariants end to end
+python tests/verify_migrations.py     # schema ledger: empty, legacy baseline, checksum, rollback
+python tests/verify_runtime.py        # runtime bootstrap idempotency, worker opt-in, one version
+python tests/verify_services.py       # application services and their typed errors
+python tests/verify_cli.py            # CLI contract: JSON output, exit codes, every command
+python tests/verify_adapters.py       # REST route, MCP tool and skill-bridge compatibility
 ```
 
-These are intentionally small acceptance scripts rather than a hidden benchmark
-suite; each one maps to a concrete reliability claim in this README. The
-remaining `tests/verify_*.py` files are regression suites (Ask flows, model
-server, async delete, specific fix batches). Run each script with an isolated
-`OPENMIND_DATA_DIR` (plus `OPENMIND_EMBED_OFFLINE=1` for deterministic offline
-embeddings); under that setup the whole `tests/` directory passes on a fresh
-clone against the neutral fixture repos in `fixtures/`.
+The remaining `tests/verify_*.py` files are regression suites (Ask flows, model
+server, async delete, specific fix batches). One script,
+`verify_delete_responsive.py`, is excluded from the CI gate and marked
+`local` in the manifest with its reason: it asserts sub-2-second API latency
+while a delete drains, which a shared CI runner's scheduling jitter makes flaky.
+Run it locally before releasing a change to the delete path.
+
+Under the runner's setup the whole `tests/` directory passes on a fresh clone
+against the neutral fixture repos in `fixtures/`.
 
 ---
 
 ## Roadmap
 
 The following are not claimed as complete in the current build:
+
+**v2 enterprise knowledge layer** — none of this is implemented. Phase 1
+(shipped) is the tool-first runtime foundation described in
+[docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md); it
+deliberately creates extension points for the items below rather than building
+them:
+
+- enterprise Asset, Revision, Claim and Relation models;
+- the engineering Knowledge Graph;
+- PDF, DOCX and XLSX parsing; COBOL and JCL support;
+- cloud model providers (OpenAI, Anthropic, Bedrock, Azure, Vertex) — the
+  runtime remains local-first with no cloud credentials;
+- requirement-to-code traceability, conflict detection and branch overlays;
+- webhook integration and a Bundle 2.0 artifact schema (export stays at
+  schema 1.x);
+- a typed worker pool or job DAG replacing the current single-worker engine.
+
+**Other work not yet done:**
 
 - installable Claude Skill packaging for the tracked capability contracts;
 - deeper change impact analysis beyond name-based caller/callee neighborhoods;

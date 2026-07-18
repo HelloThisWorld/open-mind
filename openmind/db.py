@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from . import config, machine
+from . import config, machine, migrations
 
 _conn: Optional[sqlite3.Connection] = None
 _lock = threading.RLock()
@@ -38,100 +38,38 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+_migration_result: Optional["migrations.MigrationResult"] = None
+
+
 def init_db() -> None:
-    global _conn
+    """Open the shared connection and bring the schema up to date.
+
+    The schema itself lives in :mod:`openmind.migrations.versions` — this is
+    now a migration run, not a pile of ``CREATE TABLE IF NOT EXISTS``. It stays
+    idempotent and safe to call from anywhere (the runtime bootstrap, the
+    FastAPI lifespan, a lazy ``_c()``), and it never destroys data: a legacy
+    database that predates the ledger is baselined, not recreated.
+    """
+    global _conn, _migration_result
     with _lock:
         if _conn is None:
             _conn = _connect()
-        c = _conn
-        c.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                state TEXT NOT NULL DEFAULT 'init',
-                paths_json TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                meta_json TEXT NOT NULL DEFAULT '{}'
-            );
-
-            CREATE TABLE IF NOT EXISTS jobs (
-                job_id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                path TEXT,
-                status TEXT NOT NULL,
-                step TEXT DEFAULT '',
-                progress_json TEXT NOT NULL DEFAULT '{}',
-                log_tail_json TEXT NOT NULL DEFAULT '[]',
-                control_json TEXT NOT NULL DEFAULT '{}',
-                error TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS model_config (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                config_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS file_index (
-                project_id TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                file_hash TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'indexed',
-                chunk_ids_json TEXT NOT NULL DEFAULT '[]',
-                service TEXT DEFAULT '',
-                topics_json TEXT NOT NULL DEFAULT '[]',
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (project_id, file_path)
-            );
-
-            CREATE TABLE IF NOT EXISTS kv (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-
-            -- Ask conversation history (UI memory): persistent, per-scope, bounded.
-            -- Distinct from solved cases (curated knowledge in the cases store).
-            CREATE TABLE IF NOT EXISTS ask_history (
-                exchange_id TEXT PRIMARY KEY,
-                scope_id TEXT NOT NULL,
-                project_id TEXT,
-                job_id TEXT,
-                status TEXT NOT NULL DEFAULT 'queued',
-                payload_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_ask_scope ON ask_history(scope_id);
-            """
-        )
-        c.commit()
-        _migrate_paths_to_sidecar(c)
+        # The runner takes the same lock; RLock makes the re-entry safe.
+        _migration_result = migrations.migrate(_conn, _lock)
 
 
-def _migrate_paths_to_sidecar(c: sqlite3.Connection) -> None:
-    """One-time, idempotent: move any legacy in-DB project paths (the absolute
-    ingest root used to live in ``projects.paths_json``) into the machine-local
-    sidecar, then blank the column. Keeps the portable DB free of the absolute
-    machine path. After the first run paths_json is '[]' so this is a no-op."""
-    rows = c.execute("SELECT id, paths_json FROM projects").fetchall()
-    for r in rows:
-        try:
-            legacy = json.loads(r["paths_json"] or "[]")
-        except Exception:
-            legacy = []
-        if not legacy:
-            continue
-        if not machine.get_paths(r["id"]):
-            machine.set_paths(r["id"], legacy)
-        c.execute("UPDATE projects SET paths_json='[]' WHERE id=?", (r["id"],))
-    c.commit()
+def migration_status() -> Dict[str, Any]:
+    """What the last :func:`init_db` migration run did, plus the live schema
+    version read back from the database. Reported by ``doctor`` and
+    ``GET /api/health``."""
+    with _lock:
+        version = migrations.current_version(_conn) if _conn is not None else 0
+    base = _migration_result.as_dict() if _migration_result else {
+        "version": version, "applied": [], "already_applied": [],
+        "baselined_legacy": False, "unknown_applied": [],
+    }
+    base["version"] = version
+    return base
 
 
 def _c() -> sqlite3.Connection:
