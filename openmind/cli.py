@@ -305,6 +305,9 @@ def cmd_status(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, An
     status = runtime.workspaces.status(args.workspace)
     jobs = runtime.jobs.list([args.workspace])
     active = [j for j in jobs if j.get("status") in ("queued", "running")]
+    # Additive Asset-model counts (assets_total/active/removed, revisions,
+    # segments, evidence). Backward compatible: every prior key is unchanged.
+    assets = runtime.assets.stats(args.workspace)
 
     payload = _ok({
         "workspace_id": args.workspace,
@@ -313,6 +316,9 @@ def cmd_status(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, An
         "paths": status["paths"],
         "template": status["template"],
         "counts": status["counts"],
+        "assets": {k: assets[k] for k in (
+            "assets_total", "assets_active", "assets_removed",
+            "revisions", "segments", "evidence")},
         "source_root": runtime.workspaces.source_root(args.workspace),
         "active_jobs": active,
         "recent_jobs": jobs[:args.jobs],
@@ -345,6 +351,13 @@ def cmd_status(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, An
             value = p["counts"].get(key)
             # None means "could not read that store", NOT zero.
             print(f"    {label:16} {'unknown' if value is None else value}")
+        a = p["assets"]
+        print("  assets:")
+        print(f"    {'total':16} {a['assets_total']} "
+              f"({a['assets_active']} active, {a['assets_removed']} removed)")
+        print(f"    {'revisions':16} {a['revisions']}")
+        print(f"    {'segments':16} {a['segments']}")
+        print(f"    {'evidence':16} {a['evidence']}")
         if p["active_jobs"]:
             print("  active jobs:")
             for job in p["active_jobs"]:
@@ -359,6 +372,164 @@ def cmd_status(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, An
                       f"{job.get('created_at', '')}")
 
     out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+# ---------------------------------------------------------------------------
+# Asset model inspection (OpenMind v2 Phase 2)
+# ---------------------------------------------------------------------------
+def cmd_asset_list(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """List a workspace's assets (bounded), with the total count."""
+    from .runtime import get_runtime
+
+    result = get_runtime().assets.list_assets(
+        args.workspace, asset_type=args.type, state=args.state,
+        limit=args.limit, offset=args.offset)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} of {p['total']} asset(s) "
+              f"(limit {p['limit']}, offset {p['offset']}):")
+        for a in p["assets"]:
+            rev = a.get("current_revision_id") or "-"
+            print(f"  {a['id']}  {a['state']:11} {a['asset_type']:16} "
+                  f"{a['logical_key']}  (rev {rev})")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_asset_show(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Show one asset's metadata and its current-revision summary."""
+    from .runtime import get_runtime
+
+    asset = get_runtime().assets.get_asset(args.workspace, args.asset)
+    payload = _ok({"asset": asset})
+
+    def human(p: Dict[str, Any]) -> None:
+        a = p["asset"]
+        print(f"{a['logical_key']}  ({a['id']})")
+        print(f"  type:    {a['asset_type']}")
+        print(f"  state:   {a['state']}")
+        print(f"  created: {a['created_at']}")
+        cur = a.get("current_revision")
+        if cur:
+            print(f"  current revision: {cur['id']} (seq {cur['sequence']}, "
+                  f"{cur['segment_count']} segment(s), status {cur['status']})")
+            print(f"    content_hash: {cur['content_hash']}")
+            if cur.get("source_commit"):
+                print(f"    source_commit: {cur['source_commit']}")
+        else:
+            print("  current revision: none")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_asset_revisions(args: argparse.Namespace,
+                        out: Output) -> Tuple[int, Dict[str, Any]]:
+    """List an asset's revision history, newest first."""
+    from .runtime import get_runtime
+
+    result = get_runtime().assets.list_revisions(
+        args.workspace, args.asset, limit=args.limit)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} revision(s) for asset {p['asset_id']}:")
+        for r in p["revisions"]:
+            print(f"  seq {r['sequence']:>4}  {r['status']:11} "
+                  f"{r['content_hash'][:12]}  {r['created_at']}"
+                  + (f"  commit {r['source_commit'][:10]}" if r["source_commit"] else ""))
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_asset_segments(args: argparse.Namespace,
+                       out: Output) -> Tuple[int, Dict[str, Any]]:
+    """List a revision's segments (bounded). Never prints full source content."""
+    from .runtime import get_runtime
+
+    result = get_runtime().assets.list_segments(
+        args.workspace, args.revision, limit=args.limit, offset=args.offset)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} of {p['total']} segment(s) for revision "
+              f"{p['revision_id']}:")
+        for s in p["segments"]:
+            span = (f"{s['start_line']}-{s['end_line']}"
+                    if s.get("start_line") else "-")
+            print(f"  {s['ordinal']:>4}  {s['segment_type']:11} {s['content_mode']:8} "
+                  f"L{span:<11} {s['segment_key']}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_asset_evidence(args: argparse.Namespace,
+                       out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Show one evidence citation: its locator, snapshot/current-source status
+    and bounded recovered content."""
+    from .runtime import get_runtime
+
+    result = get_runtime().assets.get_evidence(
+        args.workspace, args.evidence, max_chars=args.max_chars)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        loc = p["locator"]
+        print(f"evidence {p['id']}  (revision {p['revision_id']})")
+        print(f"  locator: {loc.get('file')}:{loc.get('startLine')}-{loc.get('endLine')}"
+              f"  {loc.get('symbol') or ''}")
+        print(f"  snapshot:       {p['snapshot']['status']}")
+        print(f"  current source: {p['current_source']['status']}")
+        rev = p.get("revision") or {}
+        if rev:
+            print(f"  revision:       seq {rev['sequence']} ({rev['status']})")
+        print(f"  content ({len(p['content'])} chars"
+              f"{', truncated' if p['truncated'] else ''}):")
+        for line in p["content"].splitlines():
+            print(f"    | {line}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_asset_add(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Ingest a single existing file that lives under a registered source root."""
+    from .runtime import get_runtime
+
+    runtime = get_runtime()
+    if args.wait:
+        out.say("Starting the job worker...")
+    try:
+        result = runtime.assets.sync_file(args.workspace, args.path,
+                                          wait=args.wait, timeout=args.timeout)
+    except OperationTimeout as exc:
+        out.warn(str(exc))
+        payload = {"ok": False, "error": exc.as_dict()}
+        payload.update(exc.details)
+        return EXIT_TIMEOUT, payload
+
+    payload = _ok(result)
+    if not result.get("supported"):
+        out.say(f"Registered unsupported file {result['logical_key']} "
+                f"(state: {result['state']}); not parsed.")
+    elif result.get("waited") and not result.get("completed"):
+        payload["ok"] = False
+        payload["error"] = {"code": "job_failed",
+                            "message": f"asset add did not complete "
+                                       f"(status: {result.get('status')})"}
+        out.warn(payload["error"]["message"])
+        out.emit(payload, lambda p: print(p.get("job_id", "")))
+        return EXIT_JOB_FAILURE, payload
+    else:
+        out.say(f"Synced {result['logical_key']} "
+                f"(job {result.get('job_id')}).")
+
+    out.emit(payload, lambda p: print(p.get("asset_id") or p.get("job_id") or ""))
     return EXIT_OK, payload
 
 
@@ -553,6 +724,65 @@ def build_parser() -> argparse.ArgumentParser:
                                    help="run the MCP stdio server")
     mcp_serve.set_defaults(func=cmd_mcp_serve)
     mcp.set_defaults(func=None, _parser=mcp)
+
+    asset = sub.add_parser("asset", parents=[common],
+                           help="inspect the canonical Asset model")
+    asset_sub = asset.add_subparsers(dest="asset_command", metavar="<subcommand>")
+
+    a_list = asset_sub.add_parser("list", parents=[common],
+                                  help="list a workspace's assets (bounded)")
+    a_list.add_argument("--workspace", required=True, help="workspace id")
+    a_list.add_argument("--type", dest="type", help="filter by asset type")
+    a_list.add_argument("--state", help="filter by state (active/removed/unsupported)")
+    a_list.add_argument("--limit", type=int, default=100, metavar="N",
+                        help="max assets to return (default: 100)")
+    a_list.add_argument("--offset", type=int, default=0, metavar="N",
+                        help="skip the first N (default: 0)")
+    a_list.set_defaults(func=cmd_asset_list)
+
+    a_show = asset_sub.add_parser("show", parents=[common],
+                                  help="show one asset + its current revision")
+    a_show.add_argument("--workspace", required=True, help="workspace id")
+    a_show.add_argument("--asset", required=True, help="asset id")
+    a_show.set_defaults(func=cmd_asset_show)
+
+    a_revs = asset_sub.add_parser("revisions", parents=[common],
+                                  help="list an asset's revision history")
+    a_revs.add_argument("--workspace", required=True, help="workspace id")
+    a_revs.add_argument("--asset", required=True, help="asset id")
+    a_revs.add_argument("--limit", type=int, default=50, metavar="N",
+                        help="max revisions to return (default: 50)")
+    a_revs.set_defaults(func=cmd_asset_revisions)
+
+    a_segs = asset_sub.add_parser("segments", parents=[common],
+                                  help="list a revision's segments (bounded)")
+    a_segs.add_argument("--workspace", required=True, help="workspace id")
+    a_segs.add_argument("--revision", required=True, help="revision id")
+    a_segs.add_argument("--limit", type=int, default=100, metavar="N",
+                        help="max segments to return (default: 100)")
+    a_segs.add_argument("--offset", type=int, default=0, metavar="N",
+                        help="skip the first N (default: 0)")
+    a_segs.set_defaults(func=cmd_asset_segments)
+
+    a_ev = asset_sub.add_parser("evidence", parents=[common],
+                                help="show one evidence citation (bounded content)")
+    a_ev.add_argument("--workspace", required=True, help="workspace id")
+    a_ev.add_argument("--evidence", required=True, help="evidence id")
+    a_ev.add_argument("--max-chars", dest="max_chars", type=int, default=4000,
+                      metavar="N", help="max recovered content chars (default: 4000)")
+    a_ev.set_defaults(func=cmd_asset_evidence)
+
+    a_add = asset_sub.add_parser("add", parents=[common],
+                                 help="ingest a single existing file")
+    a_add.add_argument("--workspace", required=True, help="workspace id")
+    a_add.add_argument("--path", required=True, help="a single existing file")
+    a_add.add_argument("--wait", action="store_true",
+                       help="wait for the ingest to finish")
+    a_add.add_argument("--timeout", type=float, default=3600.0, metavar="SECONDS",
+                       help="bound for --wait (default: 3600)")
+    a_add.set_defaults(func=cmd_asset_add)
+
+    asset.set_defaults(func=None, _parser=asset)
 
     serve = sub.add_parser("serve", parents=[common],
                            help="run the FastAPI web application")

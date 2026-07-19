@@ -75,17 +75,32 @@ runner switches the connection to explicit-transaction mode
 | --- | --- | --- |
 | 1 | `baseline` | the schema as it stood before migrations existed: `projects`, `jobs`, `model_config`, `file_index`, `kv`, `ask_history` + its index |
 | 2 | `paths_sidecar` | moves legacy in-DB project paths into the machine-local sidecar and blanks `projects.paths_json` |
+| 3 | `asset_model` | the canonical Asset model: `assets`, `asset_revisions`, `segments`, `evidence` + their indexes. Additive — creates only new tables (all `IF NOT EXISTS`), touches no existing row |
+
+`v0003` adds the OpenMind v2 canonical content-identity model. `assets`
+references `projects(id)` and the whole subtree cascades on `ON DELETE CASCADE`,
+so removing a project drops its assets, revisions, segments and evidence in one
+statement (with the connection's `PRAGMA foreign_keys=ON`). `(asset_id,
+content_hash)` is deliberately **not** unique so an A → B → A revert is
+representable. Content bytes live in an immutable content-addressed blob store
+(`data/<workspace>/objects/…`), never in the database — the DB stores only the
+SHA-256 hash. See [docs/v2/phase-2-asset-model.md](v2/phase-2-asset-model.md).
 
 ### Upgrading an existing database
 
 Nothing to do — open OpenMind and it migrates itself. Concretely:
 
 ```text
-empty database    -> v0001 creates every table         -> ledger records 1, 2
-legacy database   -> v0001 statements are all no-ops   -> ledger records 1, 2
-                                                          (data untouched)
-current database  -> nothing to apply                  -> no writes
+empty database    -> v0001..v0003 create every table    -> ledger records 1, 2, 3
+legacy database   -> v0001 statements are all no-ops,    -> ledger records 1, 2, 3
+                     v0002/v0003 apply additively           (existing data untouched)
+current database  -> nothing to apply                    -> no writes
 ```
+
+A Phase 1 database (already at v0002) upgrades to v0003 with no data loss:
+`v0003` only *creates* the new Asset tables. The Asset rows for existing files
+are then backfilled on the next ingestion — without re-embedding unchanged
+files, reusing their existing Chroma chunks.
 
 A legacy database is **baselined, not recreated**. `v0001` is written entirely
 with `CREATE TABLE IF NOT EXISTS`, so against a database that already has those

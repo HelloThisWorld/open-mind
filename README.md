@@ -81,6 +81,7 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 | Artifact | Implemented behavior |
 |---|---|
 | **Source-traceable knowledge index** | Stores repo-relative paths, content hashes, source locations, file metadata, and search chunks. |
+| **Canonical Asset model** (v2 Phase 2) | Every indexed file is an **Asset**; every observed version an immutable **Revision**; each revision divided into deterministic **Segments**, each with source-locatable **Evidence**. Historical content is snapshotted in an immutable SHA-256 content store, so evidence for an old revision stays readable after the file changes. Unchanged re-ingestion creates no revision and never re-embeds; removed files are marked removed without erasing history. |
 | **Verbatim glossary** | Extracts terms/acronyms from definition tables, definition lines, acronym expansions, and code comments; definitions are copied verbatim and carry `source_file`, `line_number`, and `content_hash`. The interactive learn path scans code/config sources; the `.openmind` export walk additionally scans README/docs/GLOSSARY files (primary definition sources). |
 | **Structure and graph map** | Builds a module tree, per-file definition index, import/dependency graph, entry points, and a name-based call/usage graph. Ambiguous call edges are flagged instead of guessed. |
 | **Exact-token + hybrid search** | Bare identifiers use token-boundary matching; natural-language queries use vector + lexical retrieval. |
@@ -95,6 +96,52 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 What this is **not**: a full compiler, type checker, IDE extension, or free-form
 autonomous coding agent. It is the source-grounded context and verification layer
 that such agents can call.
+
+---
+
+## Canonical Asset Model (v2 Phase 2)
+
+OpenMind v2 introduces a canonical content-identity model beneath the retrieval
+index. The vector store becomes a *projection*; the durable source of truth is:
+
+```text
+Workspace                       the project (id p_*; the REST API still says /projects)
+└── Asset                       one logical engineering object — a source/config file
+    └── Revision                an immutable observation of that file's exact bytes
+        ├── Segment             a stable structural unit (Java type/method/constructor,
+        │                       or a deterministic line-range) — verbatim or derived
+        └── Evidence            a source-locatable citation, recoverable from the snapshot
+```
+
+- **Workspace vs Asset vs Revision.** A *Workspace* is the existing project. An
+  *Asset* is one file, identified by its normalized workspace-relative path (no
+  absolute path ever enters the portable database). A *Revision* is one observed
+  version of that file's bytes; the first observation is sequence 1, a change
+  creates the next sequence and supersedes the previous, and a revert (A → B → A)
+  is a new revision that reuses the old content blob.
+- **Content snapshots.** Each revision's exact bytes are stored in an immutable,
+  content-addressed blob store (`data/<workspace>/objects/…`, keyed by SHA-256).
+  The database stores only the hash. This is why Evidence for a historical
+  revision stays readable after the source file changes on disk — and why vector
+  chunks are a *projection*, not the canonical store.
+- **Unchanged ingestion reuses revisions.** Re-ingesting an unchanged file
+  creates no new revision and does not re-embed it. A Phase 1 workspace backfills
+  Assets on its first Phase 2 ingest *without* re-embedding unchanged files
+  (their existing Chroma chunks are reused).
+- **Removed files preserve history.** Deleting a source file marks its Asset
+  `removed` and drops its live retrieval chunks, but keeps every revision,
+  segment, evidence and content blob. Only workspace *terminate* / *delete* wipe
+  Asset history.
+- **Inspect it** through the CLI (`openmind asset list|show|revisions|segments|
+  evidence|add`), additive read-only REST endpoints under `/projects/{id}/…`,
+  and read-only MCP tools (`list_assets`, `get_asset`, `get_asset_revisions`,
+  `get_evidence`) usable straight from Claude Code.
+
+Deliberately **not** in this phase (still later v2 work): PDF/DOCX/XLSX parsing,
+requirement and business-rule extraction, Claim/Relation tables, Knowledge-Graph
+edges and requirement-to-code traceability. Nothing here claims document
+knowledge or traceability exists yet. Full design:
+[docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md).
 
 ---
 
@@ -285,6 +332,11 @@ python -m openmind.cli ingest --workspace <id> --wait
 
 # what does it know?
 python -m openmind.cli status --workspace <id>
+
+# inspect the canonical Asset model: files -> revisions -> segments -> evidence
+python -m openmind.cli asset list --workspace <id> --type source-code --json
+python -m openmind.cli asset revisions --workspace <id> --asset <asset-id> --json
+python -m openmind.cli asset evidence --workspace <id> --evidence <evidence-id> --json
 
 # expose the knowledge layer to an editor or agent over MCP
 python -m openmind.cli mcp serve
@@ -559,8 +611,10 @@ openmind/
   domain/          typed application errors + the types crossing service calls
   ports/           the three narrow boundaries services depend on
   services/        use-case orchestration shared by CLI, MCP and FastAPI
-                   (workspace, ingest, job, export, health + the container)
-  migrations/      versioned, checksummed SQLite schema migrations
+                   (workspace, ingest, job, asset, export, health + the container)
+  content_store.py immutable SHA-256 content-addressed blob store (revision snapshots)
+  segmentation.py  deterministic Segment + Evidence drafts (shares boundaries with rag)
+  migrations/      versioned, checksummed SQLite schema migrations (v0003 = Asset model)
   walker.py        selection-aware walk, .gitignore handling, hashing
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
@@ -710,15 +764,19 @@ against the neutral fixture repos in `fixtures/`.
 
 The following are not claimed as complete in the current build:
 
-**v2 enterprise knowledge layer** — none of this is implemented. Phase 1
-(shipped) is the tool-first runtime foundation described in
-[docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md); it
-deliberately creates extension points for the items below rather than building
-them:
+**v2 enterprise knowledge layer.** Two foundation phases have shipped:
+Phase 1 is the tool-first runtime
+([docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md)), and
+Phase 2 is the canonical **Asset / Revision / Segment / Evidence** model plus the
+immutable content store
+([docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md)). The following
+later-phase items are **not** implemented; the foundation creates extension
+points for them rather than building them:
 
-- enterprise Asset, Revision, Claim and Relation models;
-- the engineering Knowledge Graph;
-- PDF, DOCX and XLSX parsing; COBOL and JCL support;
+- Claim and Relation models;
+- the engineering Knowledge Graph and requirement-to-code traceability;
+- PDF, DOCX and XLSX parsing; OCR; COBOL and JCL support; requirement and
+  business-rule extraction;
 - cloud model providers (OpenAI, Anthropic, Bedrock, Azure, Vertex) — the
   runtime remains local-first with no cloud credentials;
 - requirement-to-code traceability, conflict detection and branch overlays;

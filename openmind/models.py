@@ -95,6 +95,14 @@ class TerminateReq(BaseModel):
     clear_cases: bool = False
 
 
+class AssetSyncReq(BaseModel):
+    """Sync a single existing file into the canonical Asset model (Phase 2).
+    ``path`` must resolve under a registered workspace source root."""
+    path: str
+    wait: bool = False
+    timeout: float = 3600.0
+
+
 class RegenDocReq(BaseModel):
     scope: str
     page: Optional[str] = None

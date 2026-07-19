@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from ..ports.runtime_ports import Clock
+from .asset_service import AssetService
 from .export_service import ExportService
 from .health_service import HealthService
 from .ingest_service import IngestService
@@ -32,6 +33,7 @@ class ServiceContainer:
         self._workspaces: Optional[WorkspaceService] = None
         self._jobs: Optional[JobService] = None
         self._ingest: Optional[IngestService] = None
+        self._assets: Optional[AssetService] = None
         self._export: Optional[ExportService] = None
         self._health: Optional[HealthService] = None
 
@@ -53,6 +55,15 @@ class ServiceContainer:
             self._ingest = IngestService(self.workspaces, self.jobs,
                                          ensure_worker=self._ensure_worker)
         return self._ingest
+
+    @property
+    def assets(self) -> AssetService:
+        # Read-only Asset queries plus single-file sync. It reuses the ingest
+        # service for sync_file; constructing it never starts a worker (only a
+        # waited sync does), so the read-only MCP asset tools stay side-effect free.
+        if self._assets is None:
+            self._assets = AssetService(self.workspaces, self.ingest)
+        return self._assets
 
     @property
     def export(self) -> ExportService:

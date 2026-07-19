@@ -57,14 +57,23 @@ conn = _db()
 result = migrations.migrate(conn)
 tables = _tables(conn)
 
-check("empty db: runner reports the head version", result.version == 2)
-check("empty db: both migrations are applied",
-      result.applied == ["0001_baseline", "0002_paths_sidecar"])
+check("empty db: runner reports the head version", result.version == 3)
+check("empty db: every migration is applied in order",
+      result.applied == ["0001_baseline", "0002_paths_sidecar", "0003_asset_model"])
 check("empty db: nothing was reported as already applied", result.already_applied == [])
 check("empty db: not flagged as a legacy baseline", result.baselined_legacy is False)
 check("empty db: schema_migrations ledger exists", "schema_migrations" in tables)
 for t in ("projects", "jobs", "model_config", "file_index", "kv", "ask_history"):
     check(f"empty db: table '{t}' created", t in tables)
+# v0003 canonical Asset model tables + indexes
+for t in ("assets", "asset_revisions", "segments", "evidence"):
+    check(f"empty db: v0003 table '{t}' created", t in tables)
+_idx = {r[0] for r in conn.execute(
+    "SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+for i in ("idx_assets_ws_state", "idx_assets_ws_type", "idx_revisions_asset_seq",
+          "idx_revisions_blob", "idx_segments_revision", "idx_segments_symbol",
+          "idx_segments_rev_type", "idx_evidence_revision", "idx_evidence_segment"):
+    check(f"empty db: v0003 index '{i}' created", i in _idx)
 check("empty db: ask_history index created",
       conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND "
                    "name='idx_ask_scope'").fetchone() is not None)
@@ -77,8 +86,9 @@ check("empty db: ledger rows carry a checksum and a timestamp",
 # ---------------------------------------------------------------------------
 again = migrations.migrate(conn)
 check("repeat run: applies nothing", again.applied == [])
-check("repeat run: reports both as already applied",
-      again.already_applied == ["0001_baseline", "0002_paths_sidecar"])
+check("repeat run: reports every migration as already applied",
+      again.already_applied == ["0001_baseline", "0002_paths_sidecar",
+                                "0003_asset_model"])
 check("repeat run: version is unchanged", again.version == result.version)
 
 # ---------------------------------------------------------------------------
@@ -128,9 +138,13 @@ check("legacy db: detected as legacy before migrating", runner.detect_legacy(leg
 legacy_result = migrations.migrate(legacy)
 
 check("legacy db: reported as a legacy baseline", legacy_result.baselined_legacy is True)
-check("legacy db: brought to head version", legacy_result.version == 2)
+check("legacy db: brought to head version", legacy_result.version == 3)
 check("legacy db: baseline recorded, not skipped",
       "0001_baseline" in legacy_result.applied)
+check("legacy db: v0003 applied on top of the baseline",
+      "0003_asset_model" in legacy_result.applied)
+check("legacy db: v0003 asset tables created on the legacy database",
+      {"assets", "asset_revisions", "segments", "evidence"} <= _tables(legacy))
 check("legacy db: project row survived",
       legacy.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 1)
 check("legacy db: project meta survived intact",
