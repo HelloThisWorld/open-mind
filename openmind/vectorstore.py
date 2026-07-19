@@ -26,10 +26,52 @@ _lock = threading.Lock()
 _backend: Optional[str] = None
 _chroma_client = None
 
-# Rows drained per delete batch while dropping a collection (see
-# _drop_chroma_collection): ~0.5s of GIL hold per batch measured on a real
-# 2 GB store, small enough that the app stays responsive throughout.
-DROP_BATCH = 500
+# How the drain stays out of the app's way. BOTH knobs are load-bearing and they
+# control DIFFERENT things — see the measurements below before touching either.
+#
+#   DROP_BATCH        bounds the WORST-CASE stall (one rust call = one GIL hold)
+#   DROP_YIELD_RATIO  bounds the DUTY CYCLE (what share of the interpreter the
+#                     rest of the process gets while a drain runs)
+#
+# Measured on a copy of a real 2.1 GB store (79,585-chunk collection), with a
+# 10ms-tick thread standing in for the FastAPI threadpool:
+#
+#   batch  yield        drain      p95 stall   max stall   app availability
+#     500  10ms fixed    131s        823ms       1480ms          5%   <- shipped before
+#      50  10ms fixed    271s        187ms        352ms         23%
+#     500  0.6x hold     131s          2ms        768ms         39%
+#     200  0.5x hold     157s        170ms        359ms         38%   <- shipped now
+#
+# The old fixed 10ms gap was the bug: against a ~500ms GIL hold it left every
+# other Python thread on ~5% of the interpreter for the whole drain. That is why
+# "load a project" and "delete a project" felt frozen even though neither of
+# those code paths is itself slow (GET /projects/{id} measures 49-273ms idle).
+#
+# Note the trade in the table: a bigger batch buys throughput and a lower p95 but
+# a much worse TAIL, and it is the tail a user actually feels as a freeze. 200 is
+# chosen for the 359ms worst case, at ~20% more drain wall-clock than 500 — the
+# drain is background work, so wall-clock is the cheapest thing to spend here.
+DROP_BATCH = 200
+DROP_YIELD_RATIO = 0.5
+DROP_YIELD_MAX = 1.0
+
+# Collection names with a drain in flight IN THIS PROCESS. Two threads draining
+# one collection is not merely wasteful: whichever reaches delete_collection
+# first makes the other's next get() raise, and that exception used to be
+# reported as "interrupted" — abandoning a cleanup that had not yet removed the
+# data dir or the project row. See _drop_chroma_collection.
+_dropping_lock = threading.Lock()
+_dropping: set = set()
+
+
+def _is_missing_collection(exc: BaseException) -> bool:
+    """True when *exc* means "that collection isn't there" rather than a real
+    failure. Matched by name/text because the exception type moved between
+    chromadb releases (NotFoundError / InvalidCollectionException / ValueError)."""
+    if type(exc).__name__ in ("NotFoundError", "InvalidCollectionException"):
+        return True
+    text = str(exc).lower()
+    return "does not exist" in text or "not found" in text
 
 
 def _detect_backend() -> str:
@@ -78,36 +120,68 @@ def _drop_chroma_collection(name: str, cancel: Optional[Callable[[], bool]] = No
     the caller's 'deleting' tombstone re-spawns the cleanup on the next start
     and the drain RESUMES where it stopped.
 
+    Batching bounds a SINGLE stall; it is the gap between batches that keeps the
+    app alive, and that gap is sized from each batch's own measured hold (see
+    DROP_YIELD_RATIO). The original fixed 10ms gap did not — it left the rest of
+    the process on ~5% of the interpreter for the whole drain, which is what made
+    "load a project" and "delete a project" feel frozen even though neither of
+    those code paths was itself slow.
+
     Returns True once the collection is gone (or never existed), False if
     *cancel* stopped the drain early or a batch failed (caller retries later).
     """
+    # One drainer per collection. A second concurrent drain of the same name
+    # cannot help (they fight over the same rows) and actively HURT: it used to
+    # make the owning cleanup abandon itself mid-way, stranding the project as a
+    # permanent 'deleting' tombstone.
+    with _dropping_lock:
+        if name in _dropping:
+            print(f"[vectorstore] drop of {name} already in flight; skipping "
+                  f"duplicate request.", flush=True)
+            return False
+        _dropping.add(name)
     try:
-        col = _chroma_client.get_collection(name)
-    except Exception:
-        return True   # no such collection — nothing to drop
-    try:
-        total = col.count()
-        drained = 0
-        while True:
-            if cancel is not None and cancel():
-                print(f"[vectorstore] drop of {name} paused at "
-                      f"{drained}/{total} (shutdown); resumes on next start.",
-                      flush=True)
-                return False
-            ids = col.get(limit=DROP_BATCH, include=[]).get("ids") or []
-            if not ids:
-                break
-            col.delete(ids=ids)
-            drained += len(ids)
-            if drained % 10_000 < DROP_BATCH:
-                print(f"[vectorstore] dropping {name}: {drained}/{total}", flush=True)
-            time.sleep(0.01)   # deliberate GIL gap: let requests + signals run
-        _chroma_client.delete_collection(name)
-        return True
-    except Exception as exc:
-        print(f"[vectorstore] drop of {name} interrupted: {exc!r} "
-              f"(cleanup will retry on the next start)", flush=True)
-        return False
+        try:
+            col = _chroma_client.get_collection(name)
+        except Exception:
+            return True   # no such collection — nothing to drop
+        try:
+            total = col.count()
+            drained = 0
+            while True:
+                if cancel is not None and cancel():
+                    print(f"[vectorstore] drop of {name} paused at "
+                          f"{drained}/{total} (shutdown); resumes on next start.",
+                          flush=True)
+                    return False
+                started = time.monotonic()
+                ids = col.get(limit=DROP_BATCH, include=[]).get("ids") or []
+                if not ids:
+                    break
+                col.delete(ids=ids)
+                drained += len(ids)
+                if drained % 10_000 < DROP_BATCH:
+                    print(f"[vectorstore] dropping {name}: {drained}/{total}",
+                          flush=True)
+                # Deliberate GIL gap, sized from the hold we just took so the
+                # rest of the process keeps running (see DROP_YIELD_RATIO).
+                held = time.monotonic() - started
+                time.sleep(min(DROP_YIELD_MAX, max(0.01, held * DROP_YIELD_RATIO)))
+            _chroma_client.delete_collection(name)
+            return True
+        except Exception as exc:
+            # "already gone" is SUCCESS, not interruption. Reporting it as a
+            # failure is what let a losing racer abandon a cleanup that still
+            # had the data dir and the project row to remove.
+            if _is_missing_collection(exc):
+                print(f"[vectorstore] drop of {name}: already gone.", flush=True)
+                return True
+            print(f"[vectorstore] drop of {name} interrupted: {exc!r} "
+                  f"(cleanup will retry on the next start)", flush=True)
+            return False
+    finally:
+        with _dropping_lock:
+            _dropping.discard(name)
 
 
 def drop_collection(collection_name: str,
@@ -460,6 +534,24 @@ def cases_collection_name(project_id: str) -> str:
     return f"cases_{project_id}"
 
 
+def count_collection(collection_name: str) -> int:
+    """Row count for a collection that may not exist yet — 0 if it doesn't.
+
+    Deliberately NOT ``get_store(...).count()``: that goes through
+    ``get_or_create_collection``, so merely LOOKING at a project created its
+    ``cases_<pid>`` collection as a side effect of a read-only page view (which
+    is why stores hold empty cases collections for projects that never solved a
+    case). Read paths should not create storage."""
+    if _detect_backend() != "chroma":
+        return NumpyStore(collection_name).count()
+    try:
+        return int(_chroma_client.get_collection(collection_name).count())
+    except Exception as exc:
+        if _is_missing_collection(exc):
+            return 0
+        raise
+
+
 def get_code_store(project_id: str) -> _Store:
     return get_store(code_collection_name(project_id))
 
@@ -475,13 +567,22 @@ def _pid_of(collection_name: str) -> Optional[str]:
     return None
 
 
-def drop_orphan_collections(known_project_ids) -> List[str]:
+def drop_orphan_collections(known_project_ids,
+                            cancel: Optional[Callable[[], bool]] = None) -> List[str]:
     """Delete ``code_<pid>`` / ``cases_<pid>`` collections whose project id is no
     longer in *known_project_ids* — storage leaked by older delete paths that
     reset-and-recreated collections instead of dropping them, and by interrupted
     deletes. Best-effort; returns the names dropped. Call at startup (no concurrent
     project creation) so a half-created project's collection is never mistaken for
-    an orphan."""
+    an orphan.
+
+    *known_project_ids* MUST include projects in the 'deleting' state. Their
+    collections still exist but are OWNED by a running cleanup thread, so
+    treating them as orphans starts a second, competing drain (see
+    _drop_chroma_collection's in-flight guard, which is the backstop for that).
+
+    Pass *cancel* so a shutdown interrupts the sweep at the next batch — without
+    it, Ctrl+C during a startup sweep waits out the whole drain."""
     known = set(known_project_ids)
     dropped: List[str] = []
     if _detect_backend() == "chroma":
@@ -490,12 +591,14 @@ def drop_orphan_collections(known_project_ids) -> List[str]:
         except Exception:
             return dropped
         for name in names:
+            if cancel is not None and cancel():
+                break
             pid = _pid_of(name)
             if pid and pid not in known:
                 # drained drop (never a one-shot delete_collection): an orphan
                 # can be a full-size learned collection, and this runs at
                 # startup where a GIL-held freeze would look like a hung boot.
-                if _drop_chroma_collection(name):
+                if _drop_chroma_collection(name, cancel):
                     dropped.append(name)
     else:
         npdir = config.CHROMA_DIR / "np"

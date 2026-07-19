@@ -51,6 +51,12 @@ def start_worker() -> None:
     t.start()
 
 
+def shutdown_requested() -> bool:
+    """Public predicate for the shutdown flag, so other modules can pass a
+    ``cancel`` callback into long drains without importing a private Event."""
+    return _shutdown.is_set()
+
+
 def begin_shutdown() -> None:
     """Called from the app lifespan on shutdown. Interrupts any background
     delete-cleanup at its next batch (the 'deleting' tombstone makes it resume
@@ -408,8 +414,11 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
     _stop_project_jobs(project_id)
 
     # 1) drop the code collection (delete-only; the next learn recreates it lazily —
-    # recreating an empty collection now is wasted work on a large project)
-    vectorstore.get_code_store(project_id).drop()
+    # recreating an empty collection now is wasted work on a large project).
+    # cancel= matters even though this one is synchronous: without it a Ctrl+C
+    # during a large Terminate waits out the entire drain, which is exactly the
+    # dead-Ctrl+C symptom the batched drain was introduced to remove.
+    vectorstore.get_code_store(project_id).drop(cancel=_shutdown.is_set)
     # 2) delete map/* and docs/*
     for sub in ("map", "docs"):
         d = config.project_dir(project_id) / sub
