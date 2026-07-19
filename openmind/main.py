@@ -72,7 +72,19 @@ def _warm_vectorstore() -> None:
     see sweep_orphan_segment_dirs for why it cannot run here.)"""
     try:
         vectorstore.backend_name()
-        orphans = vectorstore.drop_orphan_collections({p["id"] for p in db.list_projects()})
+        # Same union as _sweep_orphan_project_dirs above, for the same reason: a
+        # 'deleting' project's collections are NOT orphans — a cleanup thread
+        # already owns them (jobs._recover_on_restart spawned it moments ago in
+        # lifespan). db.list_projects() with no argument EXCLUDES 'deleting', so
+        # passing it alone made the janitor race that cleanup: whichever thread
+        # reached delete_collection first made the other's next get() raise, the
+        # cleanup read that as "interrupted" and returned BEFORE removing the
+        # data dir and the project row — so the tombstone came back every boot
+        # and the project could never finish deleting.
+        known = {p["id"] for p in db.list_projects()} | \
+                {p["id"] for p in db.list_projects("deleting")}
+        orphans = vectorstore.drop_orphan_collections(
+            known, cancel=jobs.shutdown_requested)
         if orphans:
             print(f"[startup] dropped {len(orphans)} orphaned vector collection(s): "
                   f"{', '.join(orphans)}", flush=True)
@@ -102,6 +114,16 @@ async def _lifespan(app: FastAPI):
     swept = vectorstore.sweep_orphan_segment_dirs()
     if swept:
         print(f"[startup] removed {len(swept)} leaked vector segment dir(s).",
+              flush=True)
+    # Say out loud that storage reclaim is pending. A tombstone whose cleanup
+    # keeps failing used to be completely silent: the project simply vanished
+    # from the UI while every boot quietly re-ran a multi-minute drain, so the
+    # app felt slow for reasons nothing on screen could explain.
+    pending = db.list_projects("deleting")
+    if pending:
+        print(f"[startup] {len(pending)} project(s) pending storage reclaim: "
+              f"{', '.join(p['id'] for p in pending)}. The app stays usable "
+              f"while this runs; watch '[vectorstore] dropping ...' for progress.",
               flush=True)
     # The worker is opt-in per surface; the web app always needs one.
     runtime.ensure_worker()

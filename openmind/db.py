@@ -397,6 +397,20 @@ def delete_file_index_entry(project_id: str, file_path: str) -> None:
         _c().commit()
 
 
+def count_file_index(project_id: str) -> int:
+    """How many files are indexed, WITHOUT materializing them.
+
+    ``get_file_index`` builds a dict of every row and json-decodes two columns
+    per row; callers that only wanted ``len()`` of it (the project header card)
+    paid ~36ms on a 6.5k-file project to learn a number SQLite answers in under
+    a millisecond off the (project_id, file_path) primary-key index."""
+    with _lock:
+        row = _c().execute(
+            "SELECT COUNT(*) FROM file_index WHERE project_id=?", (project_id,)
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def clear_file_index(project_id: str) -> None:
     with _lock:
         _c().execute("DELETE FROM file_index WHERE project_id=?", (project_id,))

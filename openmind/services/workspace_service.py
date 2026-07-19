@@ -61,11 +61,19 @@ class WorkspaceService:
 
     def describe(self, workspace_id: str) -> Dict[str, Any]:
         """The workspace record decorated with live store counts — the shape
-        ``GET /projects/{id}`` returns."""
+        ``GET /projects/{id}`` returns.
+
+        These three numbers are header-card decoration, so they are gathered the
+        cheapest way that is still correct: counts come from collections that
+        already exist (never ``get_or_create``, which would create storage from a
+        read), and the file count is a ``COUNT(*)`` rather than a full row load.
+        """
         record = self.get(workspace_id)
-        record["code_chunks"] = vectorstore.get_code_store(workspace_id).count()
-        record["cases_count"] = vectorstore.get_cases_store(workspace_id).count()
-        record["files_indexed"] = len(self._repo.get_file_index(workspace_id))
+        record["code_chunks"] = vectorstore.count_collection(
+            vectorstore.code_collection_name(workspace_id))
+        record["cases_count"] = vectorstore.count_collection(
+            vectorstore.cases_collection_name(workspace_id))
+        record["files_indexed"] = self._repo.count_file_index(workspace_id)
         return record
 
     # -- creation -----------------------------------------------------------
@@ -167,11 +175,13 @@ class WorkspaceService:
             "template": templates.selection_info(record),
             "counts": {
                 "indexed_files": _count(
-                    lambda: len(self._repo.get_file_index(workspace_id))),
+                    lambda: self._repo.count_file_index(workspace_id)),
                 "code_chunks": _count(
-                    lambda: vectorstore.get_code_store(workspace_id).count()),
+                    lambda: vectorstore.count_collection(
+                        vectorstore.code_collection_name(workspace_id))),
                 "solved_cases": _count(
-                    lambda: vectorstore.get_cases_store(workspace_id).count()),
+                    lambda: vectorstore.count_collection(
+                        vectorstore.cases_collection_name(workspace_id))),
                 "glossary_terms": _count(
                     lambda: len(mapio.load_glossary(workspace_id).get("terms") or {})),
             },

@@ -38,5 +38,7 @@ class WorkspaceRepository(Protocol):
 
     def get_file_index(self, project_id: str) -> Dict[str, Dict[str, Any]]: ...
 
+    def count_file_index(self, project_id: str) -> int: ...
+
 
 __all__ = ["WorkspaceRepository"]
