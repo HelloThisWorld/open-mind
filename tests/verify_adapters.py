@@ -262,12 +262,22 @@ check("create_mcp_server(runtime) builds a server", server is not None)
 check("the server keeps the published name", server.name == "open-mind")
 
 registered = sorted(t.name for t in asyncio.run(server.list_tools()))
-check("all nine tools are registered on the server",
-      registered == sorted(REQUIRED_TOOLS), str(registered))
+# The nine core tools are a STABLE contract: they must remain registered,
+# unchanged. Phase 2 adds read-only Asset tools ALONGSIDE them.
+check("all nine core tools are still registered on the server",
+      set(REQUIRED_TOOLS) <= set(registered), str(registered))
+
+ASSET_TOOLS = ("list_assets", "get_asset", "get_asset_revisions", "get_evidence")
+check("the four read-only Asset tools are registered additively",
+      set(ASSET_TOOLS) <= set(registered), str(registered))
+check("the core tool set is unchanged (no core tool renamed/removed)",
+      set(mcp_server.TOOL_NAMES) == set(REQUIRED_TOOLS), str(mcp_server.TOOL_NAMES))
+check("the Asset tools are the only additions",
+      set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS), str(registered))
 
 descriptions = {t.name: (t.description or "") for t in asyncio.run(server.list_tools())}
 check("every tool still carries its docstring description",
-      all(descriptions[n].strip() for n in REQUIRED_TOOLS))
+      all(descriptions[n].strip() for n in REQUIRED_TOOLS + ASSET_TOOLS))
 
 second = mcp_server.create_mcp_server(get_runtime())
 check("create_mcp_server can be called repeatedly (independent instances)",

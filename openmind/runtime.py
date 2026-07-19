@@ -104,6 +104,10 @@ class OpenMindRuntime:
         return self.services.ingest
 
     @property
+    def assets(self):
+        return self.services.assets
+
+    @property
     def export(self):
         return self.services.export
 

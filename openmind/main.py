@@ -325,6 +325,64 @@ def delete_project(project_id: str) -> Dict[str, Any]:
     return _svc().workspaces.request_delete(project_id)
 
 
+# ---------------------------------------------------------------------------
+# Canonical Asset model (OpenMind v2 Phase 2) — ADDITIVE, read-only.
+# Every route is workspace-scoped through AssetService; a cross-workspace id
+# resolves to a typed not-found and is mapped to 404 by the exception handler.
+# The `stats` literal path is registered before `{asset_id}` so it is never
+# captured as an asset id.
+# ---------------------------------------------------------------------------
+@app.get("/projects/{project_id}/assets")
+def list_assets(project_id: str, type: Optional[str] = None,
+                state: Optional[str] = None, limit: int = 100,
+                offset: int = 0) -> Dict[str, Any]:
+    return _svc().assets.list_assets(project_id, asset_type=type, state=state,
+                                     limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/assets/stats")
+def asset_stats(project_id: str) -> Dict[str, Any]:
+    return _svc().assets.stats(project_id)
+
+
+@app.post("/projects/{project_id}/assets/sync")
+def sync_asset(project_id: str, req: models.AssetSyncReq) -> Dict[str, Any]:
+    """Ingest a single existing file under a registered source root (Phase 2).
+    Delegates to AssetService.sync_file; a directory or a file outside the root
+    is a 400, an unsupported format is registered as `unsupported` (not parsed)."""
+    return _svc().assets.sync_file(project_id, req.path, wait=req.wait,
+                                   timeout=req.timeout)
+
+
+@app.get("/projects/{project_id}/assets/{asset_id}")
+def get_asset(project_id: str, asset_id: str) -> Dict[str, Any]:
+    return _svc().assets.get_asset(project_id, asset_id)
+
+
+@app.get("/projects/{project_id}/assets/{asset_id}/revisions")
+def list_asset_revisions(project_id: str, asset_id: str,
+                         limit: int = 50) -> Dict[str, Any]:
+    return _svc().assets.list_revisions(project_id, asset_id, limit=limit)
+
+
+@app.get("/projects/{project_id}/revisions/{revision_id}")
+def get_revision(project_id: str, revision_id: str) -> Dict[str, Any]:
+    return _svc().assets.get_revision(project_id, revision_id)
+
+
+@app.get("/projects/{project_id}/revisions/{revision_id}/segments")
+def list_revision_segments(project_id: str, revision_id: str, limit: int = 200,
+                           offset: int = 0) -> Dict[str, Any]:
+    return _svc().assets.list_segments(project_id, revision_id, limit=limit,
+                                       offset=offset)
+
+
+@app.get("/projects/{project_id}/evidence/{evidence_id}")
+def get_evidence(project_id: str, evidence_id: str,
+                 max_chars: int = 4000) -> Dict[str, Any]:
+    return _svc().assets.get_evidence(project_id, evidence_id, max_chars=max_chars)
+
+
 @app.get("/scope/{scope_id}")
 def describe_scope(scope_id: str) -> Dict[str, Any]:
     return scope.describe(scope_id)

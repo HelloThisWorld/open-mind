@@ -100,8 +100,17 @@ jobs:
       - name: Migration tests
         run: python scripts/run_acceptance.py --only verify_migrations
 
-      - name: CLI tests
-        run: python scripts/run_acceptance.py --only verify_cli
+      - name: Content-store tests
+        run: python scripts/run_acceptance.py --only verify_content_store
+
+      - name: Asset model tests
+        run: python scripts/run_acceptance.py --only verify_asset_model
+
+      - name: CLI tests (base + asset commands)
+        run: python scripts/run_acceptance.py --only verify_cli --only verify_asset_cli
+
+      - name: Asset adapter tests
+        run: python scripts/run_acceptance.py --only verify_asset_adapters
 
       - name: MCP smoke test
         run: |
@@ -112,12 +121,17 @@ jobs:
           from openmind import mcp_server
           from openmind.runtime import get_runtime
 
-          expected = {"search", "route", "dispatch", "get_glossary",
-                      "find_similar_cases", "save_case", "get_doc",
-                      "propose_fix", "apply_fix"}
+          # The nine core tools are a STABLE external contract; Phase 2 adds
+          # read-only Asset tools ALONGSIDE them, never in place of one.
+          core = {"search", "route", "dispatch", "get_glossary",
+                  "find_similar_cases", "save_case", "get_doc",
+                  "propose_fix", "apply_fix"}
+          asset = {"list_assets", "get_asset", "get_asset_revisions", "get_evidence"}
           server = mcp_server.create_mcp_server(get_runtime())
           names = {t.name for t in asyncio.run(server.list_tools())}
-          assert names == expected, f"MCP tool drift: {names ^ expected}"
+          assert core <= names, f"core MCP tool missing: {core - names}"
+          assert asset <= names, f"asset MCP tool missing: {asset - names}"
+          assert names == core | asset, f"unexpected MCP tools: {names ^ (core | asset)}"
           assert server.name == "open-mind", server.name
           print("MCP smoke OK:", len(names), "tools")
           PY
@@ -212,6 +226,57 @@ jobs:
 
       - name: Artifact export contract
         run: python tests/verify_artifacts.py
+
+      - name: Migration to v0003 + content-store byte round-trip
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, tempfile
+          os.environ["OPENMIND_DATA_DIR"] = tempfile.mkdtemp()
+          os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
+          from openmind import db, content_store as cs
+          db.init_db()
+          assert db.migration_status()["version"] == 3, db.migration_status()
+          # content-addressed blob byte round-trip + reuse + SHA-256 identity
+          import hashlib
+          data = b"phase2 content \x00\x01\x02 bytes"
+          h = cs.put("p_smoke0000ci", data)
+          assert h == hashlib.sha256(data).hexdigest()
+          assert cs.put("p_smoke0000ci", data) == h          # reuse
+          assert cs.get("p_smoke0000ci", h) == data          # round-trip
+          print("migration v0003 + content-store round-trip OK:", h[:12])
+          PY
+
+      - name: CLI asset help + fixture ingest + asset list + evidence read
+        shell: bash
+        run: |
+          export OPENMIND_DATA_DIR="$(mktemp -d)"
+          export OPENMIND_MACHINE_DIR="$(mktemp -d)"
+          python -m openmind.cli asset --help > /dev/null
+          python -m openmind.cli asset list --help > /dev/null
+          WS=$(python -m openmind.cli init --name smoke --path ./fixtures/sample-repo \
+                --ingest --wait --json | python -c "import json,sys; print(json.load(sys.stdin)['workspace_id'])")
+          # Small fixture ingest -> asset list -> resolve a revision/segment/evidence
+          # id chain -> read historical evidence back from the immutable snapshot.
+          OM_WS="$WS" python - <<'PY'
+          import json, os, subprocess, sys
+          ws = os.environ["OM_WS"]
+          def cli(*args):
+              return json.loads(subprocess.check_output(
+                  [sys.executable, "-m", "openmind.cli", *args]))
+          data = cli("asset", "list", "--workspace", ws, "--json")
+          assert data["ok"] and data["total"] >= 1, data
+          aid = data["assets"][0]["id"]
+          show = cli("asset", "show", "--workspace", ws, "--asset", aid, "--json")
+          rid = show["asset"]["current_revision"]["id"]
+          segs = cli("asset", "segments", "--workspace", ws, "--revision", rid, "--json")
+          eid = segs["segments"][0]["evidence_id"]
+          ev = cli("asset", "evidence", "--workspace", ws, "--evidence", eid, "--json")
+          assert ev["snapshot"]["status"] == "available", ev
+          assert not ev["locator"]["file"].startswith("/"), ev
+          print("asset CLI smoke OK:", data["total"], "assets, evidence snapshot",
+                ev["snapshot"]["status"])
+          PY
 
       - name: Skill bridge startup
         shell: bash

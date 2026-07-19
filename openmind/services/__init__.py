@@ -25,10 +25,11 @@ need all of them.
 """
 from typing import Any
 
-__all__ = ["ExportService", "HealthService", "IngestService", "JobService",
-           "ServiceContainer", "WorkspaceService"]
+__all__ = ["AssetService", "ExportService", "HealthService", "IngestService",
+           "JobService", "ServiceContainer", "WorkspaceService"]
 
 _EXPORTS = {
+    "AssetService": ".asset_service",
     "ExportService": ".export_service",
     "HealthService": ".health_service",
     "IngestService": ".ingest_service",

@@ -58,6 +58,8 @@ class Script:
 SUITE: List[Script] = [
     # -- deterministic, dependency-light ------------------------------------
     Script("verify_migrations", CORE, "schema migrations: empty, legacy, checksum, rollback"),
+    Script("verify_content_store", CORE,
+           "immutable content-addressed blob store: atomic, reuse, corruption"),
     Script("verify_structure", CORE, "detection + structure extraction, incremental"),
     Script("verify_glossary", CORE, "deterministic glossary extraction and lookup"),
     Script("verify_router", CORE, "capability routing and graceful degradation"),
@@ -68,6 +70,14 @@ SUITE: List[Script] = [
     Script("verify_services", CORE, "application service layer"),
     Script("verify_cli", CORE, "CLI contract: JSON, exit codes, commands"),
     Script("verify_adapters", CORE, "FastAPI route + MCP + skill-bridge compatibility"),
+
+    # -- canonical Asset model (v2 Phase 2) ---------------------------------
+    Script("verify_asset_model", CORE,
+           "Asset/Revision/Segment/Evidence: ingest, idempotency, change, "
+           "revert, removal, reappearance, legacy backfill, lifecycle"),
+    Script("verify_asset_cli", CORE, "CLI asset commands: JSON, scoping, bounds"),
+    Script("verify_asset_adapters", CORE,
+           "additive REST endpoints + read-only MCP asset tools"),
 
     # -- template / docs pipeline -------------------------------------------
     Script("verify_templates", CORE, "template profile selection and validation"),

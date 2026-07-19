@@ -18,9 +18,11 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import (ask as askmod, cases, config, conversation, db, docs as docsmod,
-               embeddings, glossary, llm_client, machine, mapio, rag, resources,
-               structure, vectorstore, walker, wikienrich)
+from . import (ask as askmod, cases, config, content_store, conversation, db,
+               docs as docsmod, embeddings, glossary, llm_client, machine, mapio,
+               rag, resources, segmentation, structure, vectorstore, walker,
+               wikienrich)
+from .domain.types import AssetType
 from .model_server import server as model_server
 
 _wake = threading.Event()
@@ -433,6 +435,12 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
     # ready to re-learn in one click — clearing the repo paths here would make
     # "Start / Re-learn" fail with "add a path first" (use Delete to drop a project).
     db.clear_file_index(project_id)
+    # 3b) drop the canonical Asset model (assets cascade to revisions/segments/
+    # evidence) and its immutable content blobs. Terminate is a full wipe of
+    # LEARNED data back to init, so Asset history goes too — unlike an ordinary
+    # source-file removal, which only marks an Asset removed and keeps its history.
+    db.clear_workspace_assets(project_id)
+    content_store.clear_workspace(project_id)
     # cases: keep but flag stale, unless clearing
     if clear_cases:
         cases.clear_cases(project_id)
@@ -532,10 +540,126 @@ def _project_path_specs(project_id: str, only_path: Optional[str]) -> List[Dict[
     return specs
 
 
+# ---------------------------------------------------------------------------
+# Asset model: local Git provenance + the per-file commit into the canonical
+# Asset/Revision/Segment/Evidence store (see openmind/segmentation.py and
+# db.commit_revision). All local, deterministic, model-free.
+# ---------------------------------------------------------------------------
+def _find_git_root(start_dir: str) -> str:
+    """Nearest ancestor of *start_dir* that contains a ``.git`` entry, or ''."""
+    cur = Path(start_dir)
+    for _ in range(64):                     # bounded: never climb forever
+        if (cur / ".git").exists():
+            return str(cur)
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return ""
+
+
+def _read_git_head(git_root: str) -> str:
+    """Resolve a repo's current HEAD commit SHA from the filesystem only — no
+    network, no ``git`` subprocess. Handles a ``.git`` directory, a ``.git``
+    file (worktree/submodule), a symbolic ``ref:`` HEAD, a detached SHA, and the
+    ``packed-refs`` fallback. Any failure returns '' rather than raising."""
+    try:
+        dot_git = Path(git_root) / ".git"
+        if dot_git.is_file():               # worktree/submodule: 'gitdir: <path>'
+            content = dot_git.read_text(encoding="utf-8", errors="ignore").strip()
+            if content.startswith("gitdir:"):
+                gd = content.split(":", 1)[1].strip()
+                dot_git = Path(gd) if os.path.isabs(gd) else (Path(git_root) / gd)
+        head = (dot_git / "HEAD").read_text(encoding="utf-8", errors="ignore").strip()
+        if head.startswith("ref:"):
+            ref = head.split(":", 1)[1].strip()
+            ref_file = dot_git / ref
+            if ref_file.is_file():
+                return ref_file.read_text(encoding="utf-8", errors="ignore").strip()
+            packed = dot_git / "packed-refs"
+            if packed.is_file():
+                for line in packed.read_text(encoding="utf-8",
+                                             errors="ignore").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith(("#", "^")):
+                        continue
+                    parts = line.split(" ", 1)
+                    if len(parts) == 2 and parts[1].strip() == ref:
+                        return parts[0].strip()
+            return ""
+        return head if head else ""          # detached HEAD (a raw SHA)
+    except Exception:
+        return ""
+
+
+def _git_commit_for(file_abs: str, dir_cache: Dict[str, str],
+                    sha_cache: Dict[str, str]) -> str:
+    """The HEAD SHA of the repo containing *file_abs*, cached per repository for
+    one ingestion. Records only the real HEAD — a dirty working tree is never
+    turned into an invented SHA (dirtiness is not asserted here)."""
+    d = os.path.dirname(file_abs)
+    root = dir_cache.get(d)
+    if root is None:
+        root = _find_git_root(d)
+        dir_cache[d] = root
+    if not root:
+        return ""
+    sha = sha_cache.get(root)
+    if sha is None:
+        sha = _read_git_head(root)
+        sha_cache[root] = sha
+    return sha
+
+
+def _commit_file_asset(project_id: str, rel_key: str, text: str,
+                       source_commit: str, ac: Dict[str, int]) -> Dict[str, Any]:
+    """Snapshot one file's content + segments into the canonical Asset store and
+    tally the additive progress counters in *ac*. Writes NO vector data — the RAG
+    projection is owned by the ingest's embed batch (or reused unchanged for a
+    legacy backfill), so this never re-embeds."""
+    data = text.encode("utf-8", "replace")
+    blob_hash = content_store.hash_bytes(data)
+    if content_store.exists(project_id, blob_hash):
+        ac["content_blobs_reused"] += 1
+    else:
+        ac["content_blobs_created"] += 1
+    content_store.put(project_id, data)                     # immutable snapshot
+    segments = segmentation.segment_source(rel_key, text)
+    title = rel_key.replace("\\", "/").rsplit("/", 1)[-1]
+    res = db.commit_revision(
+        project_id, rel_key, asset_type=AssetType.classify(rel_key), title=title,
+        source_path=rel_key, content_hash=blob_hash, content_size=len(data),
+        content_blob_hash=blob_hash, segments=segments, source_commit=source_commit,
+        revision_metadata=({"git_head": source_commit} if source_commit else {}))
+    if res["asset_created"]:
+        ac["assets_created"] += 1
+    elif res["reactivated"]:
+        ac["assets_reactivated"] += 1
+    else:
+        ac["assets_reused"] += 1
+    if res["revision_created"]:
+        ac["revisions_created"] += 1
+        ac["segments_created"] += res["segments_created"]
+        ac["evidence_created"] += res["evidence_created"]
+    else:
+        ac["revisions_reused"] += 1
+    return res
+
+
+_ASSET_COUNTER_KEYS = (
+    "assets_created", "assets_reused", "assets_reactivated", "assets_removed",
+    "revisions_created", "revisions_reused", "segments_created",
+    "evidence_created", "content_blobs_created", "content_blobs_reused",
+)
+
+
 def _run_ingest(job_id: str) -> None:
     job = db.get_job(job_id)
     project_id = job["project_id"]
     db.set_project_state(project_id, "learning")
+    # A FILTERED ingest (a single file or subtree, e.g. `asset add`) must not
+    # rebuild the whole-project artifacts (glossary/structure/templates/facets)
+    # from a partial file set, and must not prune files outside the filter.
+    filtered = bool(job.get("path"))
     specs = _project_path_specs(project_id, job.get("path"))
     if not specs:
         _log(job_id, "[ingest] no paths to ingest.")
@@ -547,15 +671,29 @@ def _run_ingest(job_id: str) -> None:
     db.update_job(job_id, step="scanning")
     current_files: List[str] = []
     file_meta: Dict[str, Dict[str, str]] = {}
+    project_root_abs = machine.project_root(project_id)
     for spec in specs:
         root = walker.norm(spec["path"])
-        for f in walker.iter_files(root, spec.get("exclude", [])):
+        # A single-file spec (a filtered `asset add`) is not a directory tree, so
+        # os.walk would yield nothing; feed the one file through directly, still
+        # honouring the indexable-extension / size / binary gates. Repo/service
+        # attribution anchors to the project root, not the lone file.
+        if os.path.isfile(root):
+            ext = os.path.splitext(root)[1].lower()
+            walk_root = project_root_abs or os.path.dirname(root)
+            files_iter = ([root] if (ext in config.INDEX_EXTENSIONS
+                                     and ext not in config.BINARY_EXTENSIONS)
+                          else [])
+        else:
+            walk_root = root
+            files_iter = walker.iter_files(root, spec.get("exclude", []))
+        for f in files_iter:
             if f in file_meta:
                 # overlapping path selections (e.g. a root and its subfolder):
                 # index each file ONCE — duplicates in one embed batch would
                 # collide on identical chunk ids. First selection wins.
                 continue
-            repo = walker.find_repo_root(f, root)
+            repo = walker.find_repo_root(f, walk_root)
             svc = walker.service_name(repo)
             current_files.append(f)
             file_meta[f] = {"repo": repo, "service": svc}
@@ -591,97 +729,109 @@ def _run_ingest(job_id: str) -> None:
             _checkpoint(job_id)
             resources.guard_or_abort(lambda m: _log(job_id, m))  # keep RAM headroom
 
-    # ---- template auto-selection (recorded for later consumers, not yet applied) ----
-    # Deterministic stack detection scores the available template profiles; the
-    # winner (if any) is RECORDED in project meta as template_auto together with
-    # its score. A user override (meta["template"]) always wins at resolve time
-    # (openmind.templates.resolve_for_project). Guarded end to end: template
-    # selection must never be able to break a learn.
-    try:
-        from . import detect as detectmod, templates as templatesmod
-        detection = detectmod.detect(
-            [(rel_of(f), cache_text[f]) for f in current_files])
-        sel = templatesmod.auto_select(detection, current_set)
-        new_auto = (sel or {}).get("name")
-        p = db.get_project(project_id) or {}
-        meta = dict(p.get("meta") or {})
-        if (meta.get("template_auto") != new_auto
-                or meta.get("template_auto_score") != (sel or {}).get("score")):
-            meta["template_auto"] = new_auto
-            meta["template_auto_score"] = (sel or {}).get("score")
-            db.update_project_meta(project_id, meta)
-        if new_auto:
-            _log(job_id, f"[templates] auto-selected profile '{new_auto}' "
-                         f"(score {sel['score']}); a project override wins if set.")
-    except Exception as exc:
-        _log(job_id, f"[templates] auto-selection skipped: {exc}")
+    # The glossary, structure map, template selection and facet captures are
+    # WHOLE-PROJECT artifacts, reconciled against the full walked file set. A
+    # filtered ingest (a single file / subtree — e.g. `asset add`) sees only a
+    # slice of that set, so rebuilding them here would drop every term, symbol
+    # and fact that lives outside the slice. Skip them for a filtered run; a full
+    # ingest refreshes them. The Asset model + RAG projection below still update
+    # for exactly the filtered file(s).
+    if not filtered:
+        # ---- template auto-selection (recorded for later consumers, not yet applied) ----
+        # Deterministic stack detection scores the available template profiles; the
+        # winner (if any) is RECORDED in project meta as template_auto together with
+        # its score. A user override (meta["template"]) always wins at resolve time
+        # (openmind.templates.resolve_for_project). Guarded end to end: template
+        # selection must never be able to break a learn.
+        try:
+            from . import detect as detectmod, templates as templatesmod
+            detection = detectmod.detect(
+                [(rel_of(f), cache_text[f]) for f in current_files])
+            sel = templatesmod.auto_select(detection, current_set)
+            new_auto = (sel or {}).get("name")
+            p = db.get_project(project_id) or {}
+            meta = dict(p.get("meta") or {})
+            if (meta.get("template_auto") != new_auto
+                    or meta.get("template_auto_score") != (sel or {}).get("score")):
+                meta["template_auto"] = new_auto
+                meta["template_auto_score"] = (sel or {}).get("score")
+                db.update_project_meta(project_id, meta)
+            if new_auto:
+                _log(job_id, f"[templates] auto-selected profile '{new_auto}' "
+                             f"(score {sel['score']}); a project override wins if set.")
+        except Exception as exc:
+            _log(job_id, f"[templates] auto-selection skipped: {exc}")
 
-    # ---- template facts (roles + facet captures for the RESOLVED profile) ----
-    # Consumes the selection above (override > auto) and persists the facts map
-    # like the other learn artifacts: deterministic, file:line evidence. A learn
-    # that resolves NO template removes any stale facts file so readers never
-    # serve facts from a profile that is no longer selected. Guarded the same
-    # way: a facet error logs and skips, never fails the learn.
-    try:
-        from . import facets as facetsmod, templates as templatesmod
-        tpl = templatesmod.resolve_for_project(db.get_project(project_id))
-        if tpl and (tpl.roles or tpl.facets):
-            fdoc = facetsmod.build_facts(
-                [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files], tpl)
-            mapio.save_facts(project_id, fdoc)
-            _log(job_id, f"[templates] '{tpl.name}' facts: "
-                         f"{fdoc['stats']['files_classified']} file(s) classified, "
-                         f"{fdoc['stats']['fact_count']} fact(s) captured.")
-        else:
-            mapio.delete_facts(project_id)
-    except Exception as exc:
-        _log(job_id, f"[templates] facet build skipped: {exc}")
+        # ---- template facts (roles + facet captures for the RESOLVED profile) ----
+        # Consumes the selection above (override > auto) and persists the facts map
+        # like the other learn artifacts: deterministic, file:line evidence. A learn
+        # that resolves NO template removes any stale facts file so readers never
+        # serve facts from a profile that is no longer selected. Guarded the same
+        # way: a facet error logs and skips, never fails the learn.
+        try:
+            from . import facets as facetsmod, templates as templatesmod
+            tpl = templatesmod.resolve_for_project(db.get_project(project_id))
+            if tpl and (tpl.roles or tpl.facets):
+                fdoc = facetsmod.build_facts(
+                    [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files], tpl)
+                mapio.save_facts(project_id, fdoc)
+                _log(job_id, f"[templates] '{tpl.name}' facts: "
+                             f"{fdoc['stats']['files_classified']} file(s) classified, "
+                             f"{fdoc['stats']['fact_count']} fact(s) captured.")
+            else:
+                mapio.delete_facts(project_id)
+        except Exception as exc:
+            _log(job_id, f"[templates] facet build skipped: {exc}")
 
-    # ---- step 3: deterministic glossary (term/acronym -> VERBATIM definition) ----
-    # The primary build-time artifact: term definitions are extracted ONCE here
-    # (pure pattern-matching, no LLM, verbatim from authoritative sources) and
-    # thereafter QUERIED (never re-parsed). Incremental via the same per-file
-    # content hash — an unchanged definition source is carried over, not re-scanned.
-    db.update_job(job_id, step="glossary")
-    try:
-        gfiles = [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files]
-        # cancel-aware: a Terminate landing mid-build stops the pass promptly
-        # rather than scanning the whole corpus first. Skip persisting a partial
-        # artifact in that case — the wipe removes map/* anyway.
-        gdoc = glossary.build_glossary(
-            gfiles, prior=mapio.load_glossary(project_id),
-            cancel=lambda: _control(job_id) == "terminate")
-        if _control(job_id) != "terminate":
-            mapio.save_glossary(project_id, gdoc)
-            _log(job_id, f"[glossary] {gdoc['stats']['term_count']} term(s) from "
-                         f"{gdoc['stats']['source_count']} source(s) "
-                         f"({gdoc['stats']['sources_reused']} reused).")
-    except Exception as exc:
-        _log(job_id, f"[glossary] WARNING: build failed ({exc}) — the glossary "
-                     f"was NOT updated for this run; prior artifact (if any) kept.")
-    _checkpoint(job_id)   # raises if a pause/terminate arrived during the build
+        # ---- step 3: deterministic glossary (term/acronym -> VERBATIM definition) ----
+        # The primary build-time artifact: term definitions are extracted ONCE here
+        # (pure pattern-matching, no LLM, verbatim from authoritative sources) and
+        # thereafter QUERIED (never re-parsed). Incremental via the same per-file
+        # content hash — an unchanged definition source is carried over, not re-scanned.
+        db.update_job(job_id, step="glossary")
+        try:
+            gfiles = [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files]
+            # cancel-aware: a Terminate landing mid-build stops the pass promptly
+            # rather than scanning the whole corpus first. Skip persisting a partial
+            # artifact in that case — the wipe removes map/* anyway.
+            gdoc = glossary.build_glossary(
+                gfiles, prior=mapio.load_glossary(project_id),
+                cancel=lambda: _control(job_id) == "terminate")
+            if _control(job_id) != "terminate":
+                mapio.save_glossary(project_id, gdoc)
+                _log(job_id, f"[glossary] {gdoc['stats']['term_count']} term(s) from "
+                             f"{gdoc['stats']['source_count']} source(s) "
+                             f"({gdoc['stats']['sources_reused']} reused).")
+        except Exception as exc:
+            _log(job_id, f"[glossary] WARNING: build failed ({exc}) — the glossary "
+                         f"was NOT updated for this run; prior artifact (if any) kept.")
+        _checkpoint(job_id)   # raises if a pause/terminate arrived during the build
 
-    # ---- step 3b: deterministic STRUCTURE map (modules / defs / dependency /
-    # call / entry-point-flow graphs) — the basis of the Graphs view. Same
-    # incremental, hash-keyed, never-fabricated contract as the glossary. ----
-    db.update_job(job_id, step="structure")
-    try:
-        sfiles = [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files]
-        # paths are already relative -> store an empty root (no absolute trace)
-        sdoc = structure.build_structure(sfiles, root="",
-                                          prior=mapio.load_structure(project_id))
-        if _control(job_id) != "terminate":
-            mapio.save_structure(project_id, sdoc)
-            st = sdoc.get("stats", {})
-            _log(job_id, f"[structure] {st.get('definition_count', 0)} defs · "
-                         f"{st.get('module_count', 0)} modules · "
-                         f"{st.get('call_edges', 0)} call edges · "
-                         f"{st.get('entry_point_count', 0)} entry points "
-                         f"({st.get('sources_reused', 0)} reused).")
-    except Exception as exc:
-        _log(job_id, f"[structure] WARNING: build failed ({exc}) — the structure "
-                     f"map was NOT updated for this run; prior artifact (if any) kept.")
-    _checkpoint(job_id)
+        # ---- step 3b: deterministic STRUCTURE map (modules / defs / dependency /
+        # call / entry-point-flow graphs) — the basis of the Graphs view. Same
+        # incremental, hash-keyed, never-fabricated contract as the glossary. ----
+        db.update_job(job_id, step="structure")
+        try:
+            sfiles = [(rel_of(f), cache_text[f], cache_hash[f]) for f in current_files]
+            # paths are already relative -> store an empty root (no absolute trace)
+            sdoc = structure.build_structure(sfiles, root="",
+                                              prior=mapio.load_structure(project_id))
+            if _control(job_id) != "terminate":
+                mapio.save_structure(project_id, sdoc)
+                st = sdoc.get("stats", {})
+                _log(job_id, f"[structure] {st.get('definition_count', 0)} defs · "
+                             f"{st.get('module_count', 0)} modules · "
+                             f"{st.get('call_edges', 0)} call edges · "
+                             f"{st.get('entry_point_count', 0)} entry points "
+                             f"({st.get('sources_reused', 0)} reused).")
+        except Exception as exc:
+            _log(job_id, f"[structure] WARNING: build failed ({exc}) — the structure "
+                         f"map was NOT updated for this run; prior artifact (if any) kept.")
+        _checkpoint(job_id)
+    else:
+        _log(job_id, "[filtered] single-file/subtree ingest: glossary, structure "
+                     "and template artifacts are left unchanged (a full ingest "
+                     "rebuilds them).")
 
     # ---- step 4: RAG indexing (incremental, idempotent; Invariant 12) ----
     # Embeddings are BATCHED ACROSS files (BATCH_CHUNKS at a time), not one embed
@@ -697,6 +847,14 @@ def _run_ingest(job_id: str) -> None:
     # overrides this and is respected as-is.
     store = vectorstore.get_code_store(project_id)
     index = db.get_file_index(project_id)
+    # Canonical Asset model: load the whole workspace's asset index ONCE (like the
+    # file index) so the per-file loop can decide, without a query per file, whether
+    # an Asset already exists and whether its current revision already matches — the
+    # basis of the unchanged-legacy backfill that must NOT re-embed.
+    asset_index = db.list_asset_index(project_id)
+    ac: Dict[str, int] = {k: 0 for k in _ASSET_COUNTER_KEYS}
+    _git_dir_cache: Dict[str, str] = {}     # file dir  -> git root (per ingestion)
+    _git_sha_cache: Dict[str, str] = {}     # git root  -> HEAD sha (per ingestion)
     # only the changed/new files actually embed (incremental) — so don't stop the
     # model to free the GPU when an incremental re-ingest has nothing to embed.
     _needs_embed = any(index.get(rel_of(f), {}).get("file_hash") != cache_hash[f]
@@ -725,9 +883,23 @@ def _run_ingest(job_id: str) -> None:
         nonlocal pending, pending_chunks, chunk_total
         if not pending:
             return
+        # Vector projection first (idempotent, stable ids), then per file the
+        # compatibility file-index row and the canonical Asset revision. If the DB
+        # write fails after the upsert, the next ingest safely repeats the stable
+        # upsert and reconciles the Asset, and no partial revision becomes current
+        # (commit_revision is a single transaction).
         rag.embed_and_upsert(store, [c for rec in pending for c in rec["chunks"]])
         for rec in pending:
             ids = [c["id"] for c in rec["chunks"]]
+            # Commit the canonical Asset revision BEFORE the compatibility
+            # file_index row. file_index is the "unchanged" gate the skipped
+            # branch trusts, so it must be written LAST: if the process dies
+            # between these two writes, file_index still shows the OLD hash, the
+            # file is re-indexed next run (changed branch), and commit_revision
+            # simply reuses the already-committed revision. Writing file_index
+            # first would instead strand a stale Asset that the skip branch would
+            # trust forever.
+            _commit_file_asset(project_id, rec["f"], rec["text"], rec["commit"], ac)
             db.upsert_file_index(project_id, rec["f"], rec["h"], ids,
                                  rec["service"], rec["topics"])
             chunk_total += len(ids)
@@ -746,6 +918,18 @@ def _run_ingest(job_id: str) -> None:
         topics: List[str] = []     # chunk-header topic tags (architecture-agnostic: none)
         if prior and prior.get("file_hash") == h:
             skipped += 1
+            # Legacy backfill: this file is unchanged in the RAG index, but a
+            # Phase 1 workspace has no Asset for it yet. Snapshot it into the
+            # canonical store WITHOUT re-embedding (its Chroma chunks are reused).
+            # A file whose Asset is already in sync just tallies reuse.
+            ai = asset_index.get(r)
+            if ai and ai.get("content_hash") and ai.get("state") == "active":
+                ac["assets_reused"] += 1
+                ac["revisions_reused"] += 1
+            else:
+                _commit_file_asset(
+                    project_id, r, cache_text[f],
+                    _git_commit_for(f, _git_dir_cache, _git_sha_cache), ac)
         else:
             if prior and prior.get("chunk_ids"):
                 rag.delete_file_chunks(store, r, prior["chunk_ids"])
@@ -753,8 +937,14 @@ def _run_ingest(job_id: str) -> None:
                 changed += 1
             chunks = rag.chunk_file(project_id, r, cache_text[f],
                                     meta["service"], repo_rel, topics, h)
+            # Carry the file text + resolved Git HEAD so _flush_batch can snapshot
+            # the blob and commit the Asset revision transactionally, once the
+            # chunks for this batch are embedded.
             pending.append({"f": r, "h": h, "service": meta["service"],
-                            "topics": topics, "chunks": chunks})
+                            "topics": topics, "chunks": chunks,
+                            "text": cache_text[f],
+                            "commit": _git_commit_for(f, _git_dir_cache,
+                                                      _git_sha_cache)})
             pending_chunks += len(chunks)
             indexed += 1
             if pending_chunks >= BATCH_CHUNKS:
@@ -764,20 +954,47 @@ def _run_ingest(job_id: str) -> None:
         if i % 5 == 0 or done == len(current_files):
             _progress(job_id, files_done=done, files_skipped=skipped,
                       files_indexed=indexed, files_changed=changed,
-                      chunks=chunk_total + pending_chunks)
+                      chunks=chunk_total + pending_chunks, **ac)
     _checkpoint(job_id)   # honor a late pause/terminate before the final embed
     _flush_batch()   # embed + store the final partial batch
 
     # ---- step 5: prune removed / now-excluded files ----
+    # A FILTERED ingest saw only part of the workspace, so it must prune ONLY
+    # within the filter root(s) — otherwise a single-file `asset add` would treat
+    # every other indexed file as "gone". A full ingest prunes the whole index.
+    if filtered:
+        scope_roots = [rel_of(walker.norm(s["path"])) for s in specs]
+
+        def _in_scope(fpath: str) -> bool:
+            for rt in scope_roots:
+                if not rt or fpath == rt or fpath.startswith(rt.rstrip("/") + "/"):
+                    return True
+            return False
+    else:
+        def _in_scope(_fpath: str) -> bool:
+            return True
+
     removed = 0
     for fpath, rec in list(index.items()):
-        if fpath not in current_set:
+        if _in_scope(fpath) and fpath not in current_set:
+            # Remove the active retrieval projection + the compatibility index
+            # row, but PRESERVE the Asset's history: mark it removed, keeping every
+            # revision, segment, evidence and content blob (source deletion is not
+            # history erasure — that is what terminate/delete are for).
             rag.delete_file_chunks(store, fpath, rec.get("chunk_ids"))
             db.delete_file_index_entry(project_id, fpath)
+            if db.mark_asset_removed(project_id, fpath):
+                ac["assets_removed"] += 1
             removed += 1
-    _progress(job_id, files_removed=removed, chunks=store.count())
+    _progress(job_id, files_removed=removed, chunks=store.count(), **ac)
     _log(job_id, f"[index] indexed={indexed} changed={changed} skipped={skipped} "
                  f"removed={removed} chunks={store.count()}")
+    _log(job_id, f"[assets] +{ac['assets_created']} new "
+                 f"~{ac['assets_reused']} reused ^{ac['assets_reactivated']} reactivated "
+                 f"-{ac['assets_removed']} removed | revisions +{ac['revisions_created']} "
+                 f"={ac['revisions_reused']} reused | segments {ac['segments_created']} "
+                 f"evidence {ac['evidence_created']} | blobs +{ac['content_blobs_created']} "
+                 f"={ac['content_blobs_reused']} reused")
 
     # ---- done ----
     _checkpoint(job_id)  # if terminate raced in after the last file, abort before finalize

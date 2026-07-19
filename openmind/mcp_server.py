@@ -166,13 +166,100 @@ def apply_fix(file_path: str, find: str, replace: str, test_cmd: str,
 
 
 #: The published tool set, in registration order. The names are the MCP tool
-#: names clients call.
+#: names clients call. STABLE external contract — do not rename or change a
+#: returned key. New capabilities are ADDED via ASSET_TOOLS below, never by
+#: changing one of these nine.
 TOOLS: List[Callable[..., Any]] = [
     search, route, dispatch, get_glossary, find_similar_cases, save_case,
     get_doc, propose_fix, apply_fix,
 ]
 
 TOOL_NAMES = tuple(fn.__name__ for fn in TOOLS)
+
+
+# ---------------------------------------------------------------------------
+# Canonical Asset model tools (OpenMind v2 Phase 2) — ADDITIVE, read-only.
+#
+# These route through the shared AssetService (unlike the deterministic query
+# tools above) because they need its workspace-scoping and snapshot-based
+# evidence recovery. ``scope`` resolves to a workspace; an entity that does not
+# belong to it is an honest not-found. Results are bounded, full source is never
+# returned without an explicit bounded parameter, and merely listing the tools
+# never starts the ingestion worker.
+# ---------------------------------------------------------------------------
+def _asset_workspaces(scope: str) -> List[str]:
+    return _pids(scope)
+
+
+def list_assets(scope: str, asset_type: Optional[str] = None,
+                state: str = "active", limit: int = 50) -> Dict[str, Any]:
+    """List a workspace's canonical Assets (bounded). ``scope`` = the workspace
+    (project) id; ``state`` defaults to ``active`` (also: removed / unsupported /
+    None for all). Returns {assets, total, count} — file/config objects with their
+    logical key, type, state and current revision id."""
+    from .runtime import get_runtime
+    pid = _asset_workspaces(scope)[0]
+    result = get_runtime().assets.list_assets(
+        pid, asset_type=asset_type, state=(state or None), limit=limit)
+    return {"workspace_id": pid, "assets": result["assets"],
+            "total": result["total"], "count": result["count"]}
+
+
+def get_asset(scope: str, asset_id: str) -> Dict[str, Any]:
+    """One Asset plus its current-revision summary. Searches every workspace the
+    scope resolves to and returns the first owner; an id in no in-scope workspace
+    is an honest not-found."""
+    from .runtime import get_runtime
+    from .domain.errors import AssetNotFound
+    assets = get_runtime().assets
+    last: Optional[Exception] = None
+    for pid in _asset_workspaces(scope):
+        try:
+            return assets.get_asset(pid, asset_id)
+        except AssetNotFound as exc:
+            last = exc
+    raise last or AssetNotFound(asset_id)
+
+
+def get_asset_revisions(scope: str, asset_id: str,
+                        limit: int = 20) -> Dict[str, Any]:
+    """An Asset's revision history (bounded, newest first)."""
+    from .runtime import get_runtime
+    from .domain.errors import AssetNotFound
+    assets = get_runtime().assets
+    last: Optional[Exception] = None
+    for pid in _asset_workspaces(scope):
+        try:
+            return assets.list_revisions(pid, asset_id, limit=limit)
+        except AssetNotFound as exc:
+            last = exc
+    raise last or AssetNotFound(asset_id)
+
+
+def get_evidence(scope: str, evidence_id: str,
+                 max_chars: int = 4000) -> Dict[str, Any]:
+    """One Evidence citation with a WORKSPACE-RELATIVE source locator, bounded
+    content recovered from the immutable snapshot, and an honest report of whether
+    it came from the current source, the historical snapshot, or both."""
+    from .runtime import get_runtime
+    from .domain.errors import EvidenceNotFound
+    assets = get_runtime().assets
+    last: Optional[Exception] = None
+    for pid in _asset_workspaces(scope):
+        try:
+            return assets.get_evidence(pid, evidence_id, max_chars=max_chars)
+        except EvidenceNotFound as exc:
+            last = exc
+    raise last or EvidenceNotFound(evidence_id)
+
+
+#: Additive read-only Asset tools. Registered ALONGSIDE the nine core tools,
+#: never in place of one.
+ASSET_TOOLS: List[Callable[..., Any]] = [
+    list_assets, get_asset, get_asset_revisions, get_evidence,
+]
+
+ASSET_TOOL_NAMES = tuple(fn.__name__ for fn in ASSET_TOOLS)
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +282,8 @@ def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
 
     server = FastMCP(SERVER_NAME)
     for fn in TOOLS:
+        server.tool()(fn)
+    for fn in ASSET_TOOLS:                 # additive read-only Asset tools (Phase 2)
         server.tool()(fn)
     return server
 

@@ -8,10 +8,15 @@ without string-matching). Each adapter translates them on its own terms:
     ---------------------    ----    --------
     WorkspaceNotFound        404     1
     JobNotFound              404     1
+    AssetNotFound            404     1
+    RevisionNotFound         404     1
+    SegmentNotFound          404     1
+    EvidenceNotFound         404     1
     InvalidRequest           400     2
     DependencyUnavailable    503     3
     JobFailed               (n/a)    4
     OperationTimeout        (n/a)    5
+    ContentCorruption        500     4
 
 Every error carries a machine-readable ``code`` and an optional ``details``
 dict, so ``--json`` output stays parseable and callers never have to parse
@@ -65,6 +70,72 @@ class JobNotFound(NotFound):
     def __init__(self, job_id: str) -> None:
         super().__init__(f"job not found: {job_id!r}", details={"job_id": job_id})
         self.job_id = job_id
+
+
+class AssetNotFound(NotFound):
+    code = "asset_not_found"
+
+    def __init__(self, asset_id: str, *, workspace_id: str = "") -> None:
+        details: Dict[str, Any] = {"asset_id": asset_id}
+        if workspace_id:
+            details["workspace_id"] = workspace_id
+        super().__init__(f"asset not found: {asset_id!r}", details=details)
+        self.asset_id = asset_id
+        self.workspace_id = workspace_id
+
+
+class RevisionNotFound(NotFound):
+    code = "revision_not_found"
+
+    def __init__(self, revision_id: str, *, workspace_id: str = "") -> None:
+        details: Dict[str, Any] = {"revision_id": revision_id}
+        if workspace_id:
+            details["workspace_id"] = workspace_id
+        super().__init__(f"revision not found: {revision_id!r}", details=details)
+        self.revision_id = revision_id
+        self.workspace_id = workspace_id
+
+
+class SegmentNotFound(NotFound):
+    code = "segment_not_found"
+
+    def __init__(self, segment_id: str, *, workspace_id: str = "") -> None:
+        details: Dict[str, Any] = {"segment_id": segment_id}
+        if workspace_id:
+            details["workspace_id"] = workspace_id
+        super().__init__(f"segment not found: {segment_id!r}", details=details)
+        self.segment_id = segment_id
+        self.workspace_id = workspace_id
+
+
+class EvidenceNotFound(NotFound):
+    code = "evidence_not_found"
+
+    def __init__(self, evidence_id: str, *, workspace_id: str = "") -> None:
+        details: Dict[str, Any] = {"evidence_id": evidence_id}
+        if workspace_id:
+            details["workspace_id"] = workspace_id
+        super().__init__(f"evidence not found: {evidence_id!r}", details=details)
+        self.evidence_id = evidence_id
+        self.workspace_id = workspace_id
+
+
+class ContentCorruption(OpenMindError):
+    """A stored content blob failed its SHA-256 integrity check on read, or an
+    evidence range no longer resolves against the immutable snapshot. The bytes
+    are never returned silently-wrong; the failure is explicit."""
+
+    code = "content_corruption"
+    exit_code = 4
+    http_status = 500
+
+    def __init__(self, message: str, *, blob_hash: str = "",
+                 details: Optional[Dict[str, Any]] = None) -> None:
+        merged = dict(details or {})
+        if blob_hash:
+            merged.setdefault("blob_hash", blob_hash)
+        super().__init__(message, details=merged)
+        self.blob_hash = blob_hash
 
 
 class InvalidRequest(OpenMindError):
@@ -131,5 +202,7 @@ class OperationTimeout(OpenMindError):
 
 __all__ = [
     "OpenMindError", "NotFound", "WorkspaceNotFound", "JobNotFound",
+    "AssetNotFound", "RevisionNotFound", "SegmentNotFound", "EvidenceNotFound",
+    "ContentCorruption",
     "InvalidRequest", "DependencyUnavailable", "JobFailed", "OperationTimeout",
 ]

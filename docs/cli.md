@@ -175,6 +175,57 @@ running FastAPI server.
 A count of `unknown` (`null` in JSON) means that store could not be read — it is
 deliberately distinct from `0`, which means "read successfully, and empty".
 
+### `asset`
+
+Inspect the canonical **Asset model** (OpenMind v2 Phase 2): every indexed
+file is an **Asset**, every observed version of it an immutable **Revision**,
+each revision divided into **Segments**, each with source-locatable **Evidence**.
+See [docs/v2/phase-2-asset-model.md](v2/phase-2-asset-model.md) for the model.
+
+All subcommands take `--workspace` and support `--json` (exactly one object on
+stdout). Lists are bounded and report a total; content is never printed unbounded.
+
+```bash
+# list assets (bounded; filter by type/state)
+python -m openmind.cli asset list --workspace p_... --type source-code \
+  --state active --limit 100 --json
+
+# one asset + its current-revision summary
+python -m openmind.cli asset show --workspace p_... --asset a_... --json
+
+# an asset's revision history (newest first)
+python -m openmind.cli asset revisions --workspace p_... --asset a_... --json
+
+# a revision's segments (each carries an evidence_id for the next step)
+python -m openmind.cli asset segments --workspace p_... --revision r_... \
+  --limit 100 --json
+
+# one evidence citation: locator, snapshot + current-source status,
+# and bounded content recovered from the immutable snapshot
+python -m openmind.cli asset evidence --workspace p_... --evidence e_... \
+  --max-chars 4000 --json
+
+# ingest a single existing file that lives under a registered source root
+python -m openmind.cli asset add --workspace p_... --path ./src/File.java \
+  --wait --json
+```
+
+`asset add` accepts **one existing file** under an already-registered source
+root; a directory is rejected (exit `2`) with a pointer to `openmind add`. An
+unsupported format is registered as an `unsupported` Asset — recorded honestly,
+never falsely reported as parsed — and not ingested. Without `--wait` it returns
+the job id.
+
+`asset evidence` reports both a **snapshot** status (`available` / `corrupt` /
+`missing`, recovered from the immutable content blob) and a **current source**
+status (`matches` / `changed` / `missing`), so historical evidence stays readable
+after the source file changes. Cross-workspace access to any asset/revision/
+segment/evidence id is a typed not-found (exit `1`), never a leak.
+
+`status` additionally reports asset counts (`assets_total` / `assets_active` /
+`assets_removed`, `revisions`, `segments`, `evidence`) — additive; every prior
+`status` key is unchanged.
+
 ### `export`
 
 ```bash
@@ -200,9 +251,12 @@ python -m openmind.cli mcp serve
 ```
 
 Runs the MCP stdio server — the *same* implementation as
-`python -m openmind.mcp_server`, not a second copy of the tools. The nine tools
-(`search`, `route`, `dispatch`, `get_glossary`, `find_similar_cases`,
-`save_case`, `get_doc`, `propose_fix`, `apply_fix`) are unchanged.
+`python -m openmind.mcp_server`, not a second copy of the tools. The nine core
+tools (`search`, `route`, `dispatch`, `get_glossary`, `find_similar_cases`,
+`save_case`, `get_doc`, `propose_fix`, `apply_fix`) are unchanged. Phase 2 adds
+four **read-only** Asset tools alongside them (`list_assets`, `get_asset`,
+`get_asset_revisions`, `get_evidence`); merely serving MCP never starts the
+ingestion worker.
 
 stdout is the MCP transport, so all CLI chatter goes to stderr on this command.
 
