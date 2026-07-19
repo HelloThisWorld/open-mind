@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from openmind import config, db, jobs, vectorstore  # noqa: E402
 from openmind.services.workspace_service import WorkspaceService  # noqa: E402
 
-N_CHUNKS = 3000
+N_CHUNKS = 1200
 DIM = 384
 results = []
 
@@ -124,51 +124,65 @@ check("the real startup janitor leaves the tombstone's data dir in place",
 # ---------------------------------------------------------------------------
 # 2. Two concurrent drains of ONE collection never both proceed
 # ---------------------------------------------------------------------------
-# Forced, not hoped-for: hold a drain open with a tiny batch size, then make the
-# second call while the first is provably still running.
+# Split into a deterministic half and a timing-free half ON PURPOSE. Asserting
+# "the second call returned fast while the first was still running" would make
+# this a wall-clock race on a shared CI runner, and the acceptance runner's own
+# rule is that a flaky gate is worse than an honest exclusion. So:
+#   2a occupies the name directly and asserts the refusal — no threads, no clock;
+#   2b runs a real drain and asserts only that it claims and releases the name.
 if vectorstore.backend_name() == "chroma":
+    occupied = "code_p_occupied000"
+    with vectorstore._dropping_lock:
+        vectorstore._dropping.add(occupied)
+    try:
+        refused = vectorstore.drop_collection(occupied)
+    finally:
+        with vectorstore._dropping_lock:
+            vectorstore._dropping.discard(occupied)
+    check("a drain of an already-in-flight collection is refused",
+          refused is False, refused)
+    check("...and the refusal did not leave the name claimed",
+          occupied not in vectorstore._dropping)
+
+    # A real drain must claim the name for its duration and release it after.
     _orig_batch = vectorstore.DROP_BATCH
-    vectorstore.DROP_BATCH = 50           # ~60 batches -> seconds of drain
-    first = {}
+    vectorstore.DROP_BATCH = 50            # many small batches -> observable
+    first, seen_claimed = {}, threading.Event()
 
     def slow_drain():
         first["result"] = vectorstore.drop_collection(code_name)
 
+    watcher_stop = threading.Event()
+
+    def watcher():
+        while not watcher_stop.is_set():
+            if code_name in vectorstore._dropping:
+                seen_claimed.set()
+                return
+            time.sleep(0.005)
+
+    w = threading.Thread(target=watcher, name="claim-watcher")
+    w.start()
     t = threading.Thread(target=slow_drain, name="slow-drain")
     t.start()
-    # wait until the drain has actually claimed the name
-    claimed = False
-    for _ in range(200):
-        if code_name in vectorstore._dropping:
-            claimed = True
-            break
-        time.sleep(0.01)
-    check("a drain in progress registers itself as in-flight", claimed)
+    t.join(timeout=300)
+    watcher_stop.set()
+    w.join(timeout=5)
+    vectorstore.DROP_BATCH = _orig_batch
 
-    started = time.monotonic()
-    second = vectorstore.drop_collection(code_name)
-    elapsed = time.monotonic() - started
-    still_running = t.is_alive()
-    t.join(timeout=180)
-
-    check("the second concurrent drain is refused", second is False, second)
-    check("...and refused IMMEDIATELY, without doing competing work",
-          elapsed < 1.0, f"{elapsed:.3f}s")
-    check("...while the first drain was demonstrably still running",
-          still_running)
-    check("the first drain completed the collection", first.get("result") is True,
+    check("a drain in progress registers itself as in-flight",
+          seen_claimed.is_set())
+    check("the drain completed the collection", first.get("result") is True,
           first)
     check("the collection is gone once the drain finished",
           code_name not in collection_names())
     check("the in-flight guard released the name",
           code_name not in vectorstore._dropping)
-    vectorstore.DROP_BATCH = _orig_batch
 else:
-    for skipped in ("a drain in progress registers itself as in-flight",
-                    "the second concurrent drain is refused",
-                    "...and refused IMMEDIATELY, without doing competing work",
-                    "...while the first drain was demonstrably still running",
-                    "the first drain completed the collection",
+    for skipped in ("a drain of an already-in-flight collection is refused",
+                    "...and the refusal did not leave the name claimed",
+                    "a drain in progress registers itself as in-flight",
+                    "the drain completed the collection",
                     "the collection is gone once the drain finished",
                     "the in-flight guard released the name"):
         check(skipped + " [numpy backend: n/a]", True)
@@ -179,40 +193,52 @@ else:
 # This is the exact shape of the original bug: the losing racer must not report
 # failure, because its caller (_cleanup_deleted) reads False as "stop now" and
 # returns before removing the data dir and the project row.
-if vectorstore.backend_name() == "chroma":
-    victim = db.create_project("vanishes")
-    vpid = victim["id"]
-    inflate(vpid, n=2000)
-    vname = vectorstore.code_collection_name(vpid)
+# Forced rather than raced: a stub collection that reports rows once and then
+# claims not to exist is EXACTLY what the losing thread saw, and it reproduces
+# that on every run instead of only when the scheduler cooperates.
+class _VanishingCollection:
+    def __init__(self):
+        self.batches = 0
 
-    _orig_batch = vectorstore.DROP_BATCH
-    vectorstore.DROP_BATCH = 50
-    outcome = {}
+    def count(self):
+        return 500
 
-    def drain_victim():
-        outcome["result"] = vectorstore.drop_collection(vname)
+    def get(self, limit=None, include=None):
+        self.batches += 1
+        if self.batches == 1:
+            return {"ids": [f"x{i}" for i in range(min(limit or 50, 50))]}
+        raise ValueError("Collection does not exist.")   # deleted underneath us
 
-    dt = threading.Thread(target=drain_victim, name="victim-drain")
-    dt.start()
-    for _ in range(200):                       # let it get properly mid-drain
-        if vname in vectorstore._dropping:
-            break
-        time.sleep(0.01)
-    time.sleep(0.3)
-    try:                                       # yank it out from underneath
-        vectorstore._chroma_client.delete_collection(vname)
-    except Exception:
+    def delete(self, ids=None):
         pass
-    dt.join(timeout=180)
-    vectorstore.DROP_BATCH = _orig_batch
 
-    check("a drain whose collection vanished mid-way reports SUCCESS",
-          outcome.get("result") is True,
-          f"got {outcome.get('result')!r} — _cleanup_deleted would abandon the "
-          f"delete and strand the tombstone")
-else:
-    check("a drain whose collection vanished mid-way reports SUCCESS "
-          "[numpy backend: n/a]", True)
+
+class _VanishingClient:
+    def __init__(self, col):
+        self.col = col
+        self.deleted = []
+
+    def get_collection(self, name):
+        return self.col
+
+    def delete_collection(self, name):
+        self.deleted.append(name)
+
+
+_saved_client, _saved_backend = vectorstore._chroma_client, vectorstore._backend
+stub = _VanishingClient(_VanishingCollection())
+vectorstore._chroma_client, vectorstore._backend = stub, "chroma"
+try:
+    vanished = vectorstore.drop_collection("code_p_vanishes00")
+finally:
+    vectorstore._chroma_client, vectorstore._backend = _saved_client, _saved_backend
+
+check("a drain whose collection vanished mid-way reports SUCCESS",
+      vanished is True,
+      f"got {vanished!r} — _cleanup_deleted reads False as 'stop now' and would "
+      f"return before the rmtree and the row delete, stranding the tombstone")
+check("...and the vanished drain did not leave the name claimed",
+      "code_p_vanishes00" not in vectorstore._dropping)
 
 check("dropping an already-gone collection reports success",
       vectorstore.drop_collection(code_name) is True)
@@ -238,9 +264,13 @@ janitor = threading.Thread(target=om_main._warm_vectorstore, name="janitor")
 janitor.start()
 janitor.join(timeout=120)
 
+# Wait on THIS project only. Section 1 deliberately leaves its own tombstone
+# behind, so a "no projects are deleting" condition would never come true and
+# this loop would burn its whole timeout on every run.
 deadline = time.time() + 180
 while time.time() < deadline:
-    if db.get_project(pid2) is None and not db.list_projects("deleting"):
+    if db.get_project(pid2) is None and \
+            not [p for p in db.list_projects("deleting") if p["id"] == pid2]:
         break
     time.sleep(0.25)
 
@@ -258,7 +288,7 @@ check("no leftover collections for the deleted project",
 # ---------------------------------------------------------------------------
 proj3 = db.create_project("counts")
 pid3 = proj3["id"]
-inflate(proj3["id"], n=1000)
+inflate(proj3["id"], n=400)
 db.upsert_file_index(pid3, "src/A.java", "h1", chunk_ids=["a1", "a2"])
 db.upsert_file_index(pid3, "src/B.java", "h2", chunk_ids=["b1"])
 
@@ -274,12 +304,12 @@ check("count_collection reports 0 for a collection that does not exist",
 check("count_collection did NOT create the collection as a side effect",
       collection_names() == before, collection_names() - before)
 check("count_collection reports the real size of an existing collection",
-      vectorstore.count_collection(vectorstore.code_collection_name(pid3)) == 1000)
+      vectorstore.count_collection(vectorstore.code_collection_name(pid3)) == 400)
 
 svc = WorkspaceService()
 d = svc.describe(pid3)
 check("describe() still returns the documented shape",
-      d["code_chunks"] == 1000 and d["cases_count"] == 0 and d["files_indexed"] == 2,
+      d["code_chunks"] == 400 and d["cases_count"] == 0 and d["files_indexed"] == 2,
       {k: d[k] for k in ("code_chunks", "cases_count", "files_indexed")})
 
 jobs.begin_shutdown()

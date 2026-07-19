@@ -82,6 +82,8 @@ SUITE: List[Script] = [
     Script("verify_ask", CORE, "Ask gating when no model is ready"),
     Script("verify_ask2", CORE, "Ask history, cancellation and case saving"),
     Script("verify_async_delete", CORE, "asynchronous project delete"),
+    Script("verify_delete_race", CORE,
+           "delete completes: janitor/cleanup race, in-flight drain guard"),
     Script("verify_source_link", CORE,
            "GitHub link parsing + egress policy (no live network call)"),
     Script("verify_modelserver", CORE,
