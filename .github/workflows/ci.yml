@@ -112,6 +112,50 @@ jobs:
       - name: Asset adapter tests
         run: python scripts/run_acceptance.py --only verify_asset_adapters
 
+      # -- document ingestion (v2 Phase 3) --------------------------------
+      # Cheapest first again: the parser SPI and the parsers run in under a
+      # second, so a broken probe or a regressed parser fails immediately
+      # instead of after the ingest and CLI suites.
+      - name: Document parser registry tests
+        run: python scripts/run_acceptance.py --only verify_document_registry
+
+      - name: Document parser tests
+        run: python scripts/run_acceptance.py --only verify_document_parsers
+
+      - name: Document security tests
+        run: python scripts/run_acceptance.py --only verify_document_security
+
+      - name: Document ingestion tests
+        run: python scripts/run_acceptance.py --only verify_document_ingest
+
+      - name: Document search tests
+        run: python scripts/run_acceptance.py --only verify_document_search
+
+      - name: Document CLI tests
+        run: python scripts/run_acceptance.py --only verify_document_cli
+
+      - name: Document adapter tests
+        run: python scripts/run_acceptance.py --only verify_document_adapters
+
+      # The generated binary fixtures must regenerate byte-identically. If they
+      # do not, an "unchanged" document would mint a new Revision on every run
+      # and the incremental guarantee would be untestable.
+      - name: Document fixtures regenerate byte-identically
+        run: |
+          python - <<'PY'
+          import hashlib, pathlib, subprocess, sys
+          d = pathlib.Path("fixtures/documents")
+          before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in sorted(d.glob("*"))}
+          subprocess.run([sys.executable, "scripts/build_document_fixtures.py"],
+                         check=True, capture_output=True)
+          after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                   for p in sorted(d.glob("*"))}
+          drifted = [n for n in before if before[n] != after.get(n)]
+          assert not drifted, f"fixtures are not reproducible: {drifted}"
+          print("document fixtures reproducible:", len(before), "files")
+          PY
+
       - name: MCP smoke test
         run: |
           python - <<'PY'
@@ -122,16 +166,28 @@ jobs:
           from openmind.runtime import get_runtime
 
           # The nine core tools are a STABLE external contract; Phase 2 adds
-          # read-only Asset tools ALONGSIDE them, never in place of one.
+          # read-only Asset tools and Phase 3 read-only document tools
+          # ALONGSIDE them, never in place of one.
           core = {"search", "route", "dispatch", "get_glossary",
                   "find_similar_cases", "save_case", "get_doc",
                   "propose_fix", "apply_fix"}
           asset = {"list_assets", "get_asset", "get_asset_revisions", "get_evidence"}
+          document = {"list_documents", "get_document", "get_document_outline",
+                      "search_documents", "search_knowledge",
+                      "find_document_related_candidates"}
           server = mcp_server.create_mcp_server(get_runtime())
           names = {t.name for t in asyncio.run(server.list_tools())}
           assert core <= names, f"core MCP tool missing: {core - names}"
           assert asset <= names, f"asset MCP tool missing: {asset - names}"
-          assert names == core | asset, f"unexpected MCP tools: {names ^ (core | asset)}"
+          assert document <= names, f"document MCP tool missing: {document - names}"
+          expected = core | asset | document
+          assert names == expected, f"unexpected MCP tools: {names ^ expected}"
+          # Phase 3 adds NO document-write tool: importing reads a local file,
+          # and exposing that over MCP would let a client make the server read
+          # a path it chose.
+          assert not {n for n in names
+                      if n.startswith(("add_", "import_", "create_",
+                                       "delete_", "update_"))}, names
           assert server.name == "open-mind", server.name
           print("MCP smoke OK:", len(names), "tools")
           PY
@@ -227,7 +283,7 @@ jobs:
       - name: Artifact export contract
         run: python tests/verify_artifacts.py
 
-      - name: Migration to v0003 + content-store byte round-trip
+      - name: Migration to v0004 + content-store byte round-trip
         shell: bash
         run: |
           python - <<'PY'
@@ -236,7 +292,15 @@ jobs:
           os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
           from openmind import db, content_store as cs
           db.init_db()
-          assert db.migration_status()["version"] == 3, db.migration_status()
+          assert db.migration_status()["version"] == 4, db.migration_status()
+          conn = db._c()
+          tables = {r[0] for r in conn.execute(
+              "SELECT name FROM sqlite_master WHERE type='table'")}
+          assert {"document_parses", "document_index"} <= tables, tables
+          assert "content_blob_hash" in {
+              r[1] for r in conn.execute("PRAGMA table_info(segments)")}
+          assert "payload_json" in {
+              r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
           # content-addressed blob byte round-trip + reuse + SHA-256 identity
           import hashlib
           data = b"phase2 content \x00\x01\x02 bytes"
@@ -276,6 +340,72 @@ jobs:
           assert not ev["locator"]["file"].startswith("/"), ev
           print("asset CLI smoke OK:", data["total"], "assets, evidence snapshot",
                 ev["snapshot"]["status"])
+          PY
+
+      # -- document ingestion smoke (v2 Phase 3) --------------------------
+      # One document of each shape that matters on every OS: a text format, a
+      # ZIP-based OOXML format, a binary format with its own extractor, and a
+      # spreadsheet. Then list, outline and search, so the whole chain from
+      # bytes to a citable hit is proven cross-platform.
+      - name: Document ingestion (Markdown, DOCX, PDF, XLSX) + list/outline/search
+        shell: bash
+        run: |
+          export OPENMIND_DATA_DIR="$(mktemp -d)"
+          export OPENMIND_MACHINE_DIR="$(mktemp -d)"
+          python -m openmind.cli document --help > /dev/null
+          WS=$(python -m openmind.cli init --name docsmoke --json \
+                | python -c "import json,sys; print(json.load(sys.stdin)['workspace_id'])")
+          OM_WS="$WS" python - <<'PY'
+          import json, os, subprocess, sys
+          ws = os.environ["OM_WS"]
+          def cli(*args):
+              out = subprocess.check_output(
+                  [sys.executable, "-m", "openmind.cli", *args, "--json"])
+              return json.loads(out)
+
+          expected = {
+              "sample-requirements.md": ("markdown", "parsed"),
+              "sample-requirements.docx": ("docx", "parsed"),
+              "sample-design.pdf": ("pdf", "parsed"),
+              "sample-tests.xlsx": ("xlsx", "parsed"),
+              "sample-scanned.pdf": ("pdf", "needs-ocr"),
+          }
+          revision = None
+          for name, (parser, status) in expected.items():
+              result = cli("document", "add", "--workspace", ws,
+                           "--path", f"./fixtures/documents/{name}", "--wait")
+              report = result["import_report"]
+              assert report["parser"] == parser, (name, report["parser"])
+              assert report["parse_status"] == status, (name, report)
+              if name == "sample-requirements.md":
+                  revision = report["revision_id"]
+                  assert report["segments_created"] > 0, report
+                  assert report["blocks_indexed"] > 0, report
+              # An image-only PDF must be detected, and must NOT claim OCR ran.
+              if status == "needs-ocr":
+                  assert report["revision_created"] is False, report
+                  assert not report.get("blocks_indexed"), report
+
+          listing = cli("document", "list", "--workspace", ws)
+          assert listing["total"] >= 4, listing
+          parsers = {d["document"]["parser_name"] for d in listing["documents"]}
+          assert {"markdown", "docx", "pdf", "xlsx"} <= parsers, parsers
+
+          outline = cli("document", "outline", "--workspace", ws,
+                        "--revision", revision, "--limit", "5")
+          assert outline["count"] == 5 and outline["total"] > 5, outline
+          assert all(e["evidence_id"] for e in outline["outline"]), outline
+
+          hits = cli("document", "search", "--workspace", ws,
+                     "--query", "REQ-NC-017")
+          assert hits["count"] > 0, hits
+          assert hits["query_mode"] == "exact_token", hits
+          assert all(h["evidence_id"] for h in hits["hits"]), hits
+          # The locator must be portable: no absolute path may appear.
+          assert not any(h["locator"].get("document", "").startswith("/")
+                         for h in hits["hits"]), hits
+          print("document smoke OK:", listing["total"], "documents,",
+                hits["count"], "hits for REQ-NC-017")
           PY
 
       - name: Skill bridge startup

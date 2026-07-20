@@ -54,7 +54,18 @@ class DocumentBuilder:
 
     @property
     def full(self) -> bool:
-        return self.count >= self.max_blocks
+        """Whether the block budget is spent — and, if so, RECORD that.
+
+        Reading this is not a neutral query. Every parser consults it as its
+        early-exit guard, so the moment it first answers True is the exact moment
+        content starts being dropped. Reporting here (rather than only inside
+        :meth:`add`) is what stops a parser that breaks out of its loop from
+        producing a silently truncated document still labelled ``parsed``.
+        """
+        if self.count >= self.max_blocks:
+            self._report_block_limit()
+            return True
+        return False
 
     @property
     def heading_path(self) -> List[str]:

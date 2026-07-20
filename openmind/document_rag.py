@@ -84,12 +84,26 @@ def extract_identifiers(query: str) -> List[str]:
 
 def extract_terms(query: str) -> List[str]:
     """Lexical terms for the token-matching leg: the identifiers plus any
-    distinctive words. Stop-words are dropped so a natural-language question does
-    not lexically match every document in the workspace."""
+    distinctive words.
+
+    Two exclusions, both load-bearing:
+
+    * stop-words, so a natural-language question does not lexically match every
+      document in the workspace;
+    * any word that is a COMPONENT of an identifier already extracted. Without
+      it, ``REQ-NC-017`` also contributes the bare term ``REQ`` — which
+      token-matches ``REQ-NC-018`` and ``REQ-NC-019`` — and the precise query
+      quietly turns into "every requirement". The same applies to
+      ``namecheck.review.timeout.minutes``, whose four components would match
+      most of the corpus.
+    """
     terms = extract_identifiers(query)
     seen = set(terms)
+    components = {part.lower()
+                  for identifier in terms
+                  for part in re.split(r"[^A-Za-z0-9]+", identifier) if part}
     for word in _WORD_RE.findall(query or ""):
-        if word.lower() in _STOP or word in seen:
+        if word.lower() in _STOP or word in seen or word.lower() in components:
             continue
         seen.add(word)
         terms.append(word)

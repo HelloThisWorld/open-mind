@@ -127,11 +127,24 @@ def _int_or_none(value: Any) -> Optional[int]:
 
 
 def _symbol_of(block: DocumentBlock) -> str:
-    """A short human handle for the block, used in listings and citations.
+    """A short human handle for the block, used in listings, citations and
+    symbol lookup.
 
-    The innermost heading is the most useful one — it is what a reader would say
-    the block is "under" — falling back to the block's own key.
+    Ordered by how much the PARSER actually knew:
+
+    1. a symbol the parser named explicitly in the locator — a SQL table name, a
+       code-object name. This is a real identifier, and it is what makes a
+       document's database objects findable at all;
+    2. the parser's own ``name`` metadata, for the same reason;
+    3. the innermost heading — what a reader would say the block is "under";
+    4. the block key, which always exists.
     """
+    explicit = str(block.locator.get("symbol") or "").strip()
+    if explicit:
+        return explicit[:200]
+    named = str(block.metadata.get("name") or "").strip()
+    if named:
+        return named[:200]
     if block.heading_path:
         return block.heading_path[-1][:200]
     return block.block_key[:200]

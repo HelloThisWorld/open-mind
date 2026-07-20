@@ -272,8 +272,18 @@ check("the four read-only Asset tools are registered additively",
       set(ASSET_TOOLS) <= set(registered), str(registered))
 check("the core tool set is unchanged (no core tool renamed/removed)",
       set(mcp_server.TOOL_NAMES) == set(REQUIRED_TOOLS), str(mcp_server.TOOL_NAMES))
-check("the Asset tools are the only additions",
-      set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS), str(registered))
+# v2 Phase 3 adds six read-only document tools alongside these. The invariant
+# that matters is not "nothing else exists" — that would fail on every future
+# phase — but that every registered tool is a KNOWN, deliberate addition, so a
+# stray or accidentally-renamed tool is still caught.
+DOCUMENT_TOOLS = ("list_documents", "get_document", "get_document_outline",
+                  "search_documents", "search_knowledge",
+                  "find_document_related_candidates")
+check("the six read-only document tools are registered additively",
+      set(DOCUMENT_TOOLS) <= set(registered), str(registered))
+check("every registered tool is an accounted-for addition",
+      set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS)
+      | set(DOCUMENT_TOOLS), str(registered))
 
 descriptions = {t.name: (t.description or "") for t in asyncio.run(server.list_tools())}
 check("every tool still carries its docstring description",

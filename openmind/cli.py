@@ -573,6 +573,36 @@ def cmd_document_add(args: argparse.Namespace,
     payload = _ok(result)
     status = result.get("status", "")
 
+    # The outcome is decided BEFORE emitting. `emit` serializes the payload at
+    # the moment it is called, so setting ok/error afterwards would print
+    # `"ok": true` on stdout for a run that then exits non-zero — the exact
+    # mismatch a script would trust and get wrong.
+    exit_code = EXIT_OK
+    if status == ImportStatus.POSSIBLE_REVISION:
+        # Nothing was written and the user must choose.
+        exit_code = EXIT_DOMAIN_FAILURE
+        payload["ok"] = False
+        payload["error"] = {
+            "code": "possible_revision",
+            "message": result.get("reason", "a different document already uses "
+                                             "that key"),
+            "details": {"possible_asset_id": (result.get("possible_asset")
+                                              or {}).get("id", ""),
+                        "guidance": result.get("guidance", {})},
+        }
+    elif status == ImportStatus.UNSUPPORTED:
+        exit_code = EXIT_DOMAIN_FAILURE
+        payload["ok"] = False
+        payload["error"] = {"code": "unsupported_document",
+                            "message": result.get("reason", "unsupported")}
+    elif result.get("waited") and not result.get("completed"):
+        exit_code = EXIT_JOB_FAILURE
+        payload["ok"] = False
+        payload["error"] = result.get("error") or {
+            "code": "job_failed",
+            "message": f"document import did not complete "
+                       f"(status: {result.get('status_job')})"}
+
     def human(p: Dict[str, Any]) -> None:
         print(f"{p['status']}  {p.get('logical_key', '')}")
         if p.get("reason"):
@@ -614,34 +644,10 @@ def cmd_document_add(args: argparse.Namespace,
         elif p.get("job_id"):
             print(f"  job: {p['job_id']}")
 
+    if payload.get("error"):
+        out.warn(payload["error"]["message"])
     out.emit(payload, human)
-
-    if status == ImportStatus.POSSIBLE_REVISION:
-        # Nothing was written and the user must choose. A zero exit here would
-        # let a script believe the document was imported.
-        payload["ok"] = False
-        payload["error"] = {
-            "code": "possible_revision",
-            "message": result.get("reason", "a different document already uses "
-                                             "that key"),
-            "details": {"possible_asset_id": (result.get("possible_asset")
-                                              or {}).get("id", ""),
-                        "guidance": result.get("guidance", {})},
-        }
-        return EXIT_DOMAIN_FAILURE, payload
-    if status == ImportStatus.UNSUPPORTED:
-        payload["ok"] = False
-        payload["error"] = {"code": "unsupported_document",
-                            "message": result.get("reason", "unsupported")}
-        return EXIT_DOMAIN_FAILURE, payload
-    if result.get("waited") and not result.get("completed"):
-        payload["ok"] = False
-        payload["error"] = result.get("error") or {
-            "code": "job_failed",
-            "message": f"document import did not complete "
-                       f"(status: {result.get('status_job')})"}
-        return EXIT_JOB_FAILURE, payload
-    return EXIT_OK, payload
+    return exit_code, payload
 
 
 def cmd_document_list(args: argparse.Namespace,

@@ -184,9 +184,14 @@ def zip_member_names(data: bytes, limit: int = 4096) -> Tuple[str, ...]:
 # ---------------------------------------------------------------------------
 # Bounded text decoding
 # ---------------------------------------------------------------------------
-#: Tried in order. UTF-8 first (the overwhelmingly common case), then UTF-16
-#: variants when a BOM says so, then a latin-1 last resort that cannot fail.
-_ENCODINGS = ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1")
+#: Tried in order. UTF-8 first (the overwhelmingly common case), then the two
+#: single-byte fallbacks, ending with a latin-1 last resort that cannot fail.
+#:
+#: UTF-16 is deliberately NOT in this chain. It is attempted only when a BOM
+#: says so (see :func:`decode_text`), because a UTF-16 decode of arbitrary
+#: single-byte text SUCCEEDS whenever the length happens to be even — turning
+#: ``caf\xe9 latte`` into CJK mojibake and reporting no problem at all.
+_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
 
 
 def decode_text(data: bytes) -> Tuple[str, str, bool]:

@@ -79,6 +79,29 @@ SUITE: List[Script] = [
     Script("verify_asset_adapters", CORE,
            "additive REST endpoints + read-only MCP asset tools"),
 
+    # -- document ingestion (v2 Phase 3) ------------------------------------
+    # Ordered cheapest-first within the group: a broken parser SPI should
+    # surface in under a second rather than after a full ingest run.
+    Script("verify_document_registry", CORE,
+           "parser SPI: probing, deterministic selection, ambiguity, "
+           "missing dependency, isolation, lazy imports"),
+    Script("verify_document_parsers", CORE,
+           "every format's mandatory cases + byte-for-byte determinism"),
+    Script("verify_document_security", CORE,
+           "ZIP bombs/traversal, XML entities, formula and script "
+           "non-execution, no remote fetch, explicit limits"),
+    Script("verify_document_ingest", CORE,
+           "append workflow: duplicate, revision, collision, new-asset, "
+           "removal, reappearance, detached attachment, evidence recovery"),
+    Script("verify_document_search", CORE,
+           "document retrieval, combined knowledge search, deterministic "
+           "candidate association"),
+    Script("verify_document_cli", CORE,
+           "document CLI contract: JSON, exit codes, bounds"),
+    Script("verify_document_adapters", CORE,
+           "additive REST routes + read-only MCP document tools + the "
+           "compatibility gate"),
+
     # -- template / docs pipeline -------------------------------------------
     Script("verify_templates", CORE, "template profile selection and validation"),
     Script("verify_facets", CORE, "template facets, roles and projections"),
