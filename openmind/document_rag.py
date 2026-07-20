@@ -263,10 +263,23 @@ def search(workspace_id: str, query: str, limit: int = 20, *,
                     sorted(lexical_hits.items(), key=lambda kv: (-kv[1], kv[0]))]
     fused = _rrf([vector_rank, lexical_rank])
 
+    # When the WHOLE query is one identifier, only chunks that actually contain
+    # it are returned — an embedding-similar paragraph is not a hit for
+    # "REQ-NC-017", it is a different requirement. This mirrors the code RAG's
+    # exact-token mode, so both surfaces answer an identifier the same way.
+    bare_identifier = tokenmatch.is_exact_token_query(query) or (
+        len(identifiers) == 1 and identifiers[0] == query.strip())
+    if bare_identifier and lexical_hits:
+        candidates = [cid for cid in pool if cid in lexical_hits]
+        query_mode = "exact_token"
+    else:
+        candidates = list(pool.keys())
+        query_mode = "exact_identifier" if exact_hits else "conceptual"
+
     # An exact identifier match is PROMOTED, not merely up-weighted: a semantic
     # near-miss must never outrank the requirement the user literally named.
     ordered = sorted(
-        pool.keys(),
+        candidates,
         key=lambda cid: (0 if cid in exact_hits else 1,
                          -fused.get(cid, 0.0),
                          -lexical_hits.get(cid, 0),
@@ -280,7 +293,7 @@ def search(workspace_id: str, query: str, limit: int = 20, *,
         "hits": hits,
         "count": len(hits),
         "identifiers": identifiers,
-        "query_mode": "exact_identifier" if exact_hits else "conceptual",
+        "query_mode": query_mode,
         "filters": {"asset_type": asset_type, "parser": parser,
                     "block_type": block_type, "logical_key": logical_key,
                     "asset_id": asset_id, "include_removed": include_removed},

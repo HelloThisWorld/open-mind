@@ -1086,6 +1086,52 @@ def is_document_asset(workspace_id: str, asset_id: str) -> bool:
     return row is not None
 
 
+def list_workspace_symbols(workspace_id: str, exclude_asset: str = "",
+                           limit: int = 20_000) -> Dict[str, Dict[str, Any]]:
+    """symbol -> {segment_id, evidence_id, asset_id, logical_key, asset_type}
+    across the workspace's CURRENT revisions, in one query.
+
+    Only current revisions: a candidate must point at what the workspace knows
+    NOW, not at a symbol that existed three revisions ago. Bounded, and the first
+    occurrence of a symbol wins so the result is stable across calls.
+    """
+    with _lock:
+        rows = _c().execute(
+            "SELECT s.symbol AS sym, s.id AS sid, s.segment_type AS stype, "
+            "a.id AS aid, a.logical_key AS lk, a.asset_type AS atype, "
+            "e.id AS eid FROM segments s "
+            "JOIN assets a ON a.current_revision_id = s.revision_id "
+            "LEFT JOIN evidence e ON e.segment_id = s.id "
+            "WHERE a.workspace_id=? AND a.state='active' AND s.symbol != '' "
+            "ORDER BY a.logical_key, s.ordinal LIMIT ?",
+            (workspace_id, max(0, int(limit))),
+        ).fetchall()
+    #: Segment kinds whose symbol is a real CODE symbol. A `file` segment's
+    #: symbol is just the basename, and a document block's is its heading — both
+    #: are useful to look up verbatim but must never be split into aliases.
+    code_kinds = {"type", "method", "constructor"}
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        if exclude_asset and r["aid"] == exclude_asset:
+            continue
+        symbol = r["sym"]
+        record = {"segment_id": r["sid"], "evidence_id": r["eid"] or "",
+                  "asset_id": r["aid"], "logical_key": r["lk"],
+                  "asset_type": r["atype"], "segment_type": r["stype"]}
+        if symbol not in out:
+            out[symbol] = record
+        if r["stype"] not in code_kinds:
+            continue
+        # A Java member segment's symbol is `pkg.Class#signature`; the bare class
+        # name is what a document actually writes, so it is aliased too. ONLY for
+        # code segments: aliasing a `file` segment would turn `screening.sql`
+        # into the "symbol" `sql`, which matches every mention of the word.
+        base = symbol.split("#", 1)[0].rsplit(".", 1)[-1]
+        if base and base != symbol and base not in out:
+            out[base] = dict(record)
+    return out
+
+
 def get_document_index(workspace_id: str,
                        asset_id: str) -> Optional[Dict[str, Any]]:
     with _lock:
@@ -1111,6 +1157,28 @@ def list_document_index(workspace_id: str) -> Dict[str, Dict[str, Any]]:
                             "revision_id": r["revision_id"],
                             "chunk_ids": json.loads(r["chunk_ids_json"]),
                             "updated_at": r["updated_at"]} for r in rows}
+
+
+def upsert_document_index(workspace_id: str, asset_id: str, revision_id: str,
+                          chunk_ids: List[str]) -> None:
+    """Record an Asset's live chunk list OUTSIDE a revision commit.
+
+    The normal path writes this inside ``commit_revision``'s transaction. This
+    exists for the one case with no new revision to commit: a document that was
+    removed and has reappeared unchanged, whose projection has to be rebuilt
+    against its EXISTING current revision.
+    """
+    with _lock:
+        _c().execute(
+            "INSERT INTO document_index (workspace_id,asset_id,revision_id,"
+            "chunk_ids_json,updated_at) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(workspace_id,asset_id) DO UPDATE SET "
+            "revision_id=excluded.revision_id, "
+            "chunk_ids_json=excluded.chunk_ids_json, "
+            "updated_at=excluded.updated_at",
+            (workspace_id, asset_id, revision_id, json.dumps(list(chunk_ids)),
+             now()))
+        _c().commit()
 
 
 def delete_document_index(workspace_id: str, asset_id: str) -> None:

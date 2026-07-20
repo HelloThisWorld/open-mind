@@ -105,6 +105,8 @@ def _worker_loop() -> None:
                           control={"requested": None}, error="")
             if job["type"] == "ingest":
                 _run_ingest(job["job_id"])
+            elif job["type"] == "document_ingest":
+                _run_document_ingest(job["job_id"])
             elif job["type"] == "gendocs":
                 _run_gendocs(job["job_id"])
             elif job["type"] == "ask":
@@ -255,6 +257,40 @@ def enqueue_gendocs(project_id: str) -> Dict[str, Any]:
     job = db.create_job(project_id, "gendocs", None)
     _wake.set()
     return job
+
+
+#: Keys a document-import payload may carry. Anything else is dropped rather
+#: than persisted: the payload lives in the PORTABLE database, so an accidental
+#: absolute path added by a future caller must not silently travel with the data.
+_DOCUMENT_PAYLOAD_KEYS = frozenset({
+    "staged_blob_hash", "original_filename", "requested_asset_id",
+    "requested_logical_key", "import_mode", "source_kind", "version_label",
+    "parser_options",
+})
+
+
+def enqueue_document_ingest(project_id: str,
+                            payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Queue the import of one already-staged document (v2 Phase 3).
+
+    Unlike ``enqueue_ingest`` this does NOT dedupe by workspace: two different
+    documents appended in quick succession are two separate pieces of work, and
+    collapsing them would silently drop one.
+    """
+    safe = {k: v for k, v in (payload or {}).items()
+            if k in _DOCUMENT_PAYLOAD_KEYS}
+    if not safe.get("staged_blob_hash"):
+        raise ValueError("document_ingest payload needs a staged_blob_hash")
+    filename = str(safe.get("original_filename") or "")
+    if "/" in filename or "\\" in filename or (len(filename) > 1
+                                               and filename[1] == ":"):
+        # A bare NAME is fine to store; a PATH is a machine trace and must never
+        # reach the portable database.
+        raise ValueError("document_ingest payload must not contain a path")
+    job = db.create_job(project_id, "document_ingest", None)
+    db.set_job_payload(job["job_id"], safe)
+    _wake.set()
+    return db.get_job(job["job_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -1000,6 +1036,14 @@ def _run_ingest(job_id: str) -> None:
                  f"evidence {ac['evidence_created']} | blobs +{ac['content_blobs_created']} "
                  f"={ac['content_blobs_reused']} reused")
 
+    # ---- step 6: documents (v2 Phase 3) ----
+    # A separate discovery policy and a separate pipeline: document extensions
+    # are deliberately NOT in INDEX_EXTENSIONS, so a .pdf can never reach
+    # walker.read_text, and one file can never become both a code Asset and a
+    # document Asset. A filtered code ingest must not prune documents, so
+    # document pruning only happens on a full run.
+    _run_document_sweep(job_id, project_id, specs, root, filtered, ac)
+
     # ---- done ----
     _checkpoint(job_id)  # if terminate raced in after the last file, abort before finalize
     db.update_job(job_id, status="done", step="done", finished_at=db.now())
@@ -1007,6 +1051,265 @@ def _run_ingest(job_id: str) -> None:
     _log(job_id, "[done] ingest complete; triggering docs sync + wiki enrichment.")
     enqueue_gendocs(project_id)
     enqueue_enrich(project_id)   # timing (b): index is READY first; enrich follows
+
+
+# ---------------------------------------------------------------------------
+# Document ingestion (OpenMind v2 Phase 3)
+#
+# One document at a time, from an ALREADY-STAGED immutable blob. The job row
+# carries only a blob hash and a filename, so a restart can resume it without an
+# absolute machine path ever having been persisted — and a re-run is safe,
+# because the blob is content-addressed and the vector chunk ids are derived
+# from the content.
+# ---------------------------------------------------------------------------
+def _document_step(job_id: str, step: str) -> None:
+    db.update_job(job_id, step=step)
+
+
+def _run_document_sweep(job_id: str, project_id: str,
+                        specs: List[Dict[str, Any]], root: str,
+                        filtered: bool, ac: Dict[str, int]) -> None:
+    """Discover, ingest and prune the workspace's DOCUMENT assets.
+
+    Incremental in exactly the way the code pipeline is: a document whose bytes
+    are unchanged produces no revision and no embedding, because
+    ``commit_document`` compares the content hash before doing anything.
+
+    Guarded end to end. A malformed document must fail its own ingest and be
+    recorded honestly, never take down a whole learn that has already indexed the
+    code correctly.
+    """
+    db.update_job(job_id, step="documents")
+    discovered: Dict[str, str] = {}          # logical key -> absolute path
+    for spec in specs:
+        spec_root = walker.norm(spec["path"])
+        if os.path.isfile(spec_root):
+            ext = os.path.splitext(spec_root)[1].lower()
+            files = ([spec_root] if ext in config.DOCUMENT_DISCOVERY_EXTENSIONS
+                     else [])
+        else:
+            files = walker.iter_document_files(spec_root, spec.get("exclude", []))
+        for path in files:
+            discovered.setdefault(machine.relativize(path, root), path)
+
+    if not discovered and filtered:
+        return
+
+    index = db.list_document_index(project_id)
+    imported = unchanged = failed = removed = 0
+    store = vectorstore.get_documents_store(project_id) if discovered else None
+
+    for logical_key, abspath in sorted(discovered.items()):
+        _checkpoint(job_id)
+        try:
+            with open(abspath, "rb") as handle:
+                data = handle.read()
+        except OSError as exc:
+            failed += 1
+            _log(job_id, f"[documents] could not read {logical_key}: {exc}")
+            continue
+        try:
+            report = ingest_one_document(
+                project_id, job_id, data=data, logical_key=logical_key,
+                filename=os.path.basename(abspath), source_kind="file",
+                source_commit=_git_commit_for(abspath, {}, {}), store=store)
+        except Exception as exc:
+            # One bad document fails ITSELF. The worker survives, every other
+            # document still lands, and the failure is on the job log.
+            failed += 1
+            _log(job_id, f"[documents] {logical_key} failed to ingest: "
+                         f"{type(exc).__name__}: {exc}")
+            continue
+        if report.get("revision_created"):
+            imported += 1
+        elif report.get("state") == "unsupported":
+            failed += 1
+        else:
+            unchanged += 1
+
+    # Pruning is FULL-INGEST ONLY. A filtered code ingest saw a slice of the
+    # workspace and must never conclude that every document outside it is gone.
+    if not filtered:
+        for asset_id, record in index.items():
+            asset = db.get_asset(project_id, asset_id)
+            if not asset or asset.get("state") != "active":
+                continue
+            if asset.get("source_kind") == "attachment":
+                # An attachment's origin path is deliberately not tracked, so it
+                # is never "missing from the workspace". Its snapshot IS the
+                # canonical source.
+                continue
+            if asset["logical_key"] in discovered:
+                continue
+            chunk_ids = record.get("chunk_ids") or []
+            if chunk_ids and store is not None:
+                store.delete(ids=chunk_ids)
+            db.delete_document_index(project_id, asset_id)
+            if db.mark_asset_removed(project_id, asset["logical_key"]):
+                ac["assets_removed"] += 1
+            removed += 1
+
+    if discovered or removed:
+        _log(job_id, f"[documents] discovered={len(discovered)} "
+                     f"imported={imported} unchanged={unchanged} "
+                     f"unsupported/failed={failed} removed={removed}")
+    _progress(job_id, documents_total=len(discovered),
+              documents_imported=imported, documents_unchanged=unchanged,
+              documents_failed=failed, documents_removed=removed)
+
+
+def ingest_one_document(project_id: str, job_id: str, *, data: bytes,
+                        logical_key: str, filename: str, source_kind: str,
+                        version_label: str = "", source_commit: str = "",
+                        parser_options: Optional[Dict[str, Any]] = None,
+                        store: Any = None) -> Dict[str, Any]:
+    """Parse and commit ONE document. Shared by the attach job and the workspace
+    document sweep, so both paths produce identical Assets and projections.
+
+    Returns an import report. A parse that produced no usable content
+    (``unsupported`` / ``failed`` / ``needs-ocr`` / ``encrypted``) does NOT
+    become a content revision — the Asset is registered honestly as
+    ``unsupported`` instead, so "we could not read this" never looks like "this
+    document is empty".
+    """
+    from . import documents as documents_pkg
+    from .documents import pipeline
+
+    _document_step(job_id, "probing-format")
+    parsed = documents_pkg.parse_bytes(
+        data, logical_key=logical_key, filename=filename,
+        workspace_id=project_id, parser_options=parser_options or {})
+
+    report: Dict[str, Any] = {
+        "logical_key": logical_key,
+        "parser": parsed.parser_name,
+        "parser_version": parsed.parser_version,
+        "parse_status": parsed.status,
+        "title": parsed.title,
+        "blocks": len(parsed.blocks),
+        "warnings": [w.as_dict() for w in parsed.warnings],
+        "unsupported_content": [u.as_dict() for u in parsed.unsupported_content],
+        "coverage": dict(parsed.coverage),
+    }
+
+    if not parsed.usable:
+        asset = db.upsert_asset(
+            project_id, logical_key,
+            asset_type=AssetType.classify(logical_key) or AssetType.DOCUMENT,
+            title=parsed.title or filename, source_path=logical_key,
+            state="unsupported", media_type=parsed.media_type,
+            source_kind=source_kind,
+            metadata={"parse_status": parsed.status,
+                      "parse_reason": parsed.reason})
+        report.update({"asset_id": asset["id"], "revision_created": False,
+                       "state": "unsupported", "reason": parsed.reason,
+                       "blocks_indexed": 0})
+        _log(job_id, f"[document] {logical_key}: {parsed.status} "
+                     f"({parsed.reason or 'not parseable'}); registered as an "
+                     f"unsupported asset, NOT parsed.")
+        return report
+
+    _document_step(job_id, "storing-segments")
+    content_store.put(project_id, data)          # immutable revision snapshot
+    blob_hash = content_store.hash_bytes(data)
+
+    _document_step(job_id, "embedding-documents")
+    result = pipeline.commit_document(
+        project_id, logical_key, parsed=parsed, content=data,
+        blob_hash=blob_hash, title=parsed.title or filename,
+        source_kind=source_kind, source_path=logical_key,
+        version_label=version_label, source_commit=source_commit,
+        store=store if store is not None
+        else vectorstore.get_documents_store(project_id))
+    report.update({
+        "asset_id": result["asset_id"],
+        "revision_id": (result.get("revision") or {}).get("id", ""),
+        "revision_sequence": (result.get("revision") or {}).get("sequence"),
+        "revision_created": result.get("revision_created", False),
+        "asset_created": result.get("asset_created", False),
+        "reactivated": result.get("reactivated", False),
+        "segments_created": result.get("segments_created", 0),
+        "evidence_created": result.get("evidence_created", 0),
+        "blocks_indexed": result.get("blocks_indexed", 0),
+        "replaced_chunks": len(result.get("replaced_chunk_ids") or []),
+        "version_label": result.get("version_label", ""),
+        "version_label_source": result.get("version_label_source", ""),
+        "state": "active",
+    })
+    return report
+
+
+def _run_document_ingest(job_id: str) -> None:
+    """Import one staged document, then look for deterministic candidates."""
+    job = db.get_job(job_id)
+    project_id = job["project_id"]
+    payload = db.get_job_payload(job_id)
+    blob_hash = str(payload.get("staged_blob_hash") or "")
+    filename = str(payload.get("original_filename") or "document")
+    logical_key = str(payload.get("requested_logical_key") or "")
+
+    if not blob_hash or not logical_key:
+        db.update_job(job_id, status="failed", finished_at=db.now(),
+                      error="document_ingest payload is incomplete "
+                            "(staged_blob_hash and requested_logical_key are "
+                            "required)")
+        return
+
+    _document_step(job_id, "reading-snapshot")
+    try:
+        data = content_store.get(project_id, blob_hash)
+    except Exception as exc:
+        db.update_job(job_id, status="failed", finished_at=db.now(),
+                      error=f"staged document blob unavailable: {exc}")
+        return
+
+    _checkpoint(job_id)
+    _document_step(job_id, "parsing")
+    report = ingest_one_document(
+        project_id, job_id, data=data, logical_key=logical_key,
+        filename=filename,
+        source_kind=str(payload.get("source_kind") or "attachment"),
+        version_label=str(payload.get("version_label") or ""),
+        parser_options=payload.get("parser_options") or {})
+
+    _checkpoint(job_id)
+    report["related_candidates"] = _document_candidates(
+        job_id, project_id, report.get("asset_id", ""))
+
+    _document_step(job_id, "committing")
+    _log(job_id, f"[document] {logical_key}: {report['parse_status']} via "
+                 f"{report['parser']} — {report.get('segments_created', 0)} "
+                 f"segment(s), {report.get('blocks_indexed', 0)} indexed, "
+                 f"{len(report.get('warnings') or [])} warning(s).")
+    progress = dict(job.get("progress") or {})
+    progress["import_report"] = report
+    db.update_job(job_id, status="done", step="done", finished_at=db.now(),
+                  progress=progress)
+
+
+def _document_candidates(job_id: str, project_id: str,
+                         asset_id: str) -> Dict[str, Any]:
+    """Deterministic candidate association for a freshly imported document.
+
+    Guarded end to end: candidate association is a convenience, and a failure in
+    it must never fail an import whose content is already committed correctly.
+    """
+    if not asset_id:
+        return {"count": 0, "top": []}
+    _document_step(job_id, "finding-related-candidates")
+    try:
+        from .documents import candidates as candidates_module
+        found = candidates_module.find_candidates(project_id, asset_id, limit=20)
+    except Exception as exc:
+        _log(job_id, f"[document] candidate association skipped: {exc}")
+        return {"count": 0, "top": [], "error": str(exc)}
+    top = found.get("candidates", [])[:5]
+    if found.get("count"):
+        _log(job_id, f"[document] {found['count']} related CANDIDATE(s) found "
+                     f"(observed mentions, not confirmed relations).")
+    return {"count": found.get("count", 0), "total_found":
+            found.get("total_found", 0), "signals": found.get("signals", {}),
+            "top": top, "status": found.get("status", "candidate")}
 
 
 # ---------------------------------------------------------------------------

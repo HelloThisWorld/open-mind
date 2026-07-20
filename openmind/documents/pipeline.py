@@ -291,8 +291,8 @@ def commit_document(workspace_id: str, logical_key: str, *, parsed: ParsedDocume
     # chunk metadata can name it before the transaction runs.
     existing = repository.find_asset_by_logical_key(workspace_id, logical_key)
     asset_id = existing["id"] if existing else db_module.new_id("a_")
-    unchanged = bool(existing
-                     and (existing.get("current_revision_id"))
+    current_revision_id = (existing or {}).get("current_revision_id") or ""
+    unchanged = bool(existing and current_revision_id
                      and _current_content_hash(repository, workspace_id,
                                                existing) == blob_hash)
 
@@ -307,10 +307,9 @@ def commit_document(workspace_id: str, logical_key: str, *, parsed: ParsedDocume
     }
 
     if unchanged:
-        # Identical content: commit_revision creates nothing, so there is no new
-        # revision to index and the existing projection is already correct. Going
-        # through it anyway keeps the reactivation path (a removed asset that
-        # reappeared) in one place.
+        # Identical content: commit_revision creates no new revision. It still
+        # runs, because it owns reactivating an Asset that was removed and has
+        # reappeared.
         result = repository.commit_revision(
             workspace_id, logical_key, asset_type=resolved_type, title=title,
             source_path=source_path, content_hash=blob_hash,
@@ -318,6 +317,15 @@ def commit_document(workspace_id: str, logical_key: str, *, parsed: ParsedDocume
             segments=[], media_type=parsed.media_type, source_kind=source_kind,
             source_commit=source_commit, asset_state=AssetState.ACTIVE)
         report.update(result)
+        # A REMOVED document's chunks were deleted and its index row dropped, so
+        # "unchanged" is not the same as "already indexed". Without this, a
+        # reappeared document would be active in the database and invisible to
+        # search — the worst kind of failure, because nothing looks wrong.
+        index = repository.get_document_index(workspace_id, asset_id) or {}
+        if index.get("revision_id") != current_revision_id:
+            report.update(_reindex_current(
+                repository, workspace_id, asset_id, current_revision_id,
+                blob_hash, parsed, logical_key, resolved_type, store, embed))
         return report
 
     revision_id = db_module.new_id("r_")
@@ -369,6 +377,37 @@ def _current_content_hash(repo: Any, workspace_id: str,
                           asset: Dict[str, Any]) -> str:
     revision = repo.get_revision(workspace_id, asset.get("current_revision_id"))
     return (revision or {}).get("content_hash", "")
+
+
+def _reindex_current(repo: Any, workspace_id: str, asset_id: str,
+                     revision_id: str, content_hash: str,
+                     parsed: ParsedDocument, logical_key: str, asset_type: str,
+                     store: Any, embed: Any) -> Dict[str, Any]:
+    """Rebuild the vector projection for an EXISTING revision.
+
+    Used when the content is unchanged but the projection is not there —
+    a document that was removed and reappeared, or a crash between the vector
+    upsert and the index write. The segment and evidence ids come from the
+    database (this revision was committed long ago), not from fresh drafts, so
+    every chunk still cites the Evidence that already exists.
+    """
+    stored = repo.list_segments(workspace_id, revision_id, limit=5000)
+    evidence = repo.evidence_ids_for_revision(workspace_id, revision_id)
+    drafts = [{"segment_key": row["segment_key"], "id": row["id"],
+               "evidence": {"id": evidence.get(row["id"], "")}}
+              for row in stored]
+    chunks = build_chunks(workspace_id, asset_id, revision_id, content_hash,
+                          parsed, logical_key, asset_type, drafts)
+    if store is not None and chunks:
+        embed_fn = embed if embed is not None else _default_embed
+        documents = [c["document"] for c in chunks]
+        store.upsert(ids=[c["id"] for c in chunks], embeddings=embed_fn(documents),
+                     documents=documents,
+                     metadatas=[c["metadata"] for c in chunks])
+    repo.upsert_document_index(workspace_id, asset_id, revision_id,
+                               [c["id"] for c in chunks])
+    return {"blocks_indexed": len(chunks),
+            "chunk_ids": [c["id"] for c in chunks], "reindexed": True}
 
 
 def _default_embed(documents: List[str]) -> Any:

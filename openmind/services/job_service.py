@@ -56,6 +56,16 @@ class JobService:
         """Queue a generated-documentation build."""
         return self._engine.enqueue_gendocs(workspace_id)
 
+    def enqueue_document_ingest(self, workspace_id: str,
+                                payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Queue the import of ONE staged document (OpenMind v2 Phase 3).
+
+        *payload* must be safe to persist: a staged blob hash, the original
+        filename and the import decision — never an absolute machine path. The
+        engine validates that before writing the row.
+        """
+        return self._engine.enqueue_document_ingest(workspace_id, payload)
+
     # -- reads --------------------------------------------------------------
     def get(self, job_id: str) -> Dict[str, Any]:
         job = self._reader.get_job(job_id)
