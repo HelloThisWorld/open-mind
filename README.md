@@ -82,6 +82,7 @@ Point Open Mind at a local repository and it builds persisted artifacts:
 |---|---|
 | **Source-traceable knowledge index** | Stores repo-relative paths, content hashes, source locations, file metadata, and search chunks. |
 | **Canonical Asset model** (v2 Phase 2) | Every indexed file is an **Asset**; every observed version an immutable **Revision**; each revision divided into deterministic **Segments**, each with source-locatable **Evidence**. Historical content is snapshotted in an immutable SHA-256 content store, so evidence for an old revision stays readable after the file changes. Unchanged re-ingestion creates no revision and never re-embeds; removed files are marked removed without erasing history. |
+| **Enterprise documents** (v2 Phase 3) | Markdown, text/RST/AsciiDoc, HTML, CSV, DOCX, text-based PDF, XLSX, OpenAPI, JSON Schema and SQL DDL become Assets with the same Revision/Segment/Evidence discipline. Parsing is deterministic and model-free; each block's exact text is snapshotted so a citation survives a parser upgrade. Documents can be appended at any time from anywhere on the machine, live in their own vector collection (the code `search` contract is untouched), and are never merged just because two filenames match. Image-only PDFs are *detected* (`needs-ocr`) — OCR is not performed and never claimed. |
 | **Verbatim glossary** | Extracts terms/acronyms from definition tables, definition lines, acronym expansions, and code comments; definitions are copied verbatim and carry `source_file`, `line_number`, and `content_hash`. The interactive learn path scans code/config sources; the `.openmind` export walk additionally scans README/docs/GLOSSARY files (primary definition sources). |
 | **Structure and graph map** | Builds a module tree, per-file definition index, import/dependency graph, entry points, and a name-based call/usage graph. Ambiguous call edges are flagged instead of guessed. |
 | **Exact-token + hybrid search** | Bare identifiers use token-boundary matching; natural-language queries use vector + lexical retrieval. |
@@ -137,11 +138,69 @@ Workspace                       the project (id p_*; the REST API still says /pr
   and read-only MCP tools (`list_assets`, `get_asset`, `get_asset_revisions`,
   `get_evidence`) usable straight from Claude Code.
 
-Deliberately **not** in this phase (still later v2 work): PDF/DOCX/XLSX parsing,
-requirement and business-rule extraction, Claim/Relation tables, Knowledge-Graph
-edges and requirement-to-code traceability. Nothing here claims document
-knowledge or traceability exists yet. Full design:
-[docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md).
+Full design: [docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md).
+
+---
+
+## Enterprise Documents (v2 Phase 3)
+
+Documents are first-class Assets. A requirements DOCX, a design PDF, a test-case
+spreadsheet or an OpenAPI description gets the same treatment a source file
+does: immutable Revisions, structural Segments, and Evidence you can cite.
+
+**Supported formats.** Markdown · plain text / RST / AsciiDoc · HTML · CSV/TSV ·
+DOCX · text-based PDF · XLSX · OpenAPI (JSON/YAML) · JSON Schema · SQL DDL.
+Parsing is deterministic and model-free — no LLM reads your documents.
+
+```bash
+# append a document from anywhere on this machine
+python -m openmind.cli document add \
+  --workspace p_... --path ./Requirements_v3.docx --wait --json
+
+# find an exact requirement id, with a citable evidence id per hit
+python -m openmind.cli document search --workspace p_... --query REQ-NC-017 --json
+
+# code and documents together, reported separately
+python -m openmind.cli knowledge search --workspace p_... --query "NameCheck timeout" --json
+```
+
+- **Append at any time, from anywhere.** A workspace can start with no
+  documents. A document does not have to live under a registered source root —
+  and its absolute origin path never enters the portable database. The import
+  job carries a content hash and a filename, nothing else.
+- **Two documents are never merged because their filenames match.** Re-adding
+  identical bytes is a `duplicate` (no job, no revision, no vector duplicate).
+  A filename collision with *different* content is a `possible_revision`: it
+  writes **nothing** and hands back the exact commands that resolve it.
+- **Structure is preserved, and so is what was dropped.** Heading hierarchy,
+  tables, spreadsheet ranges, page numbers and JSON Pointers all become
+  locators. An embedded image, a macro, a hidden sheet or an unparseable vendor
+  SQL statement is *recorded* as unsupported content with a count — never
+  silently ignored.
+- **Nothing is silently truncated.** Every resource limit produces a `partial`
+  parse plus a warning naming the exact limit and the observed value.
+- **Evidence survives the source.** Each block's exact text is snapshotted as
+  its own content-addressed blob, so a historical citation is recovered
+  **without re-running a parser** — a newer parser version cannot rewrite
+  history. An attachment's current-source status is `not-applicable`, not a
+  false `missing`.
+- **Exact identifiers beat similar-looking text.** A search for `REQ-NC-017`
+  returns blocks that contain it, never `REQ-NC-0170` and never a paragraph that
+  merely reads like it. Documents live in their own vector collection, so the
+  existing code `search` behaves exactly as before.
+- **Related results are candidates, not relationships.** After an import,
+  OpenMind reports *observed mentions* — of files, symbols, requirement ids,
+  API paths, config keys, database objects and glossary terms — each labelled
+  `status: "candidate"` with a confidence. Nothing is persisted, and no result
+  claims a document *implements*, *refines*, *verifies* or *contradicts*
+  anything.
+
+Deliberately **not** in this phase: Requirement, Business Rule and Design
+Decision extraction; Claim/Relation tables; Knowledge-Graph edges;
+requirement-to-code traceability; and **OCR** — an image-only PDF is *detected*
+and reported `needs-ocr`, with no text invented for it and no claim that OCR
+ran. Full design:
+[docs/v2/phase-3-document-ingestion.md](docs/v2/phase-3-document-ingestion.md).
 
 ---
 
@@ -338,6 +397,11 @@ python -m openmind.cli asset list --workspace <id> --type source-code --json
 python -m openmind.cli asset revisions --workspace <id> --asset <asset-id> --json
 python -m openmind.cli asset evidence --workspace <id> --evidence <evidence-id> --json
 
+# append an enterprise document (DOCX / PDF / XLSX / Markdown / OpenAPI / ...)
+python -m openmind.cli document add --workspace <id> --path ./Requirements.docx --wait
+python -m openmind.cli document search --workspace <id> --query REQ-NC-017 --json
+python -m openmind.cli knowledge search --workspace <id> --query "review timeout" --json
+
 # expose the knowledge layer to an editor or agent over MCP
 python -m openmind.cli mcp serve
 
@@ -432,6 +496,27 @@ Implemented MCP tools:
 | `get_doc` | A generated learning-guide page (template `guide` sections; deterministic, `file:line`-cited), or an honest miss when no template guide applies. |
 | `propose_fix` | Preview a literal find/replace as a unified diff. |
 | `apply_fix` | Apply the literal replacement only if the test suite stays green. |
+
+Additive read-only tools — the nine above are a frozen contract, and new
+capabilities are added *beside* them, never in place of one:
+
+| Tool | Purpose |
+|---|---|
+| `list_assets` | A workspace's canonical Assets (bounded). |
+| `get_asset` | One Asset plus its current-revision summary. |
+| `get_asset_revisions` | An Asset's revision history, newest first. |
+| `get_evidence` | One citation with bounded content recovered from the immutable snapshot. |
+| `list_documents` | A workspace's document Assets, filterable by parse status or parser. |
+| `get_document` | One document with its full parse summary, warnings and unread content. |
+| `get_document_outline` | A bounded structural outline of a document revision. |
+| `search_documents` | Document search; exact identifiers outrank similar text. |
+| `search_knowledge` | Code and documents, returned as separate sections. |
+| `find_document_related_candidates` | Observed mentions, labelled `candidate`, never confirmed relations. |
+
+There is deliberately **no document-write MCP tool**: importing reads a local
+file, and exposing that over MCP would let a client make the server read a path
+it chose. Claude Code drives `openmind document add` through its shell instead,
+where the command is visible.
 
 ---
 
@@ -611,10 +696,16 @@ openmind/
   domain/          typed application errors + the types crossing service calls
   ports/           the three narrow boundaries services depend on
   services/        use-case orchestration shared by CLI, MCP and FastAPI
-                   (workspace, ingest, job, asset, export, health + the container)
+                   (workspace, ingest, job, asset, document, export, health)
   content_store.py immutable SHA-256 content-addressed blob store (revision snapshots)
   segmentation.py  deterministic Segment + Evidence drafts (shares boundaries with rag)
-  migrations/      versioned, checksummed SQLite schema migrations (v0003 = Asset model)
+  documents/       the document plane: parser SPI + registry, ten deterministic
+                   parsers, safety limits, import planning, commit pipeline and
+                   candidate association. Imports no parser dependency itself.
+  document_rag.py  document retrieval (vector + exact-token + RRF) and the
+                   combined code/document knowledge search
+  migrations/      versioned, checksummed SQLite schema migrations
+                   (v0003 = Asset model, v0004 = document ingestion)
   walker.py        selection-aware walk, .gitignore handling, hashing
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
@@ -746,6 +837,15 @@ python tests/verify_runtime.py        # runtime bootstrap idempotency, worker op
 python tests/verify_services.py       # application services and their typed errors
 python tests/verify_cli.py            # CLI contract: JSON output, exit codes, every command
 python tests/verify_adapters.py       # REST route, MCP tool and skill-bridge compatibility
+python tests/verify_content_store.py  # immutable blob store: atomic write, reuse, corruption
+python tests/verify_asset_model.py    # Asset/Revision/Segment/Evidence lifecycle
+python tests/verify_document_registry.py  # parser SPI: probing, single selection, ambiguity
+python tests/verify_document_parsers.py   # every format's mandatory cases + determinism
+python tests/verify_document_security.py  # ZIP bombs, XML entities, no formula/script execution
+python tests/verify_document_ingest.py    # append, duplicate, collision, removal, evidence
+python tests/verify_document_search.py    # exact-identifier ranking, candidates never confirmed
+python tests/verify_document_cli.py       # document CLI: JSON, exit codes, bounds
+python tests/verify_document_adapters.py  # additive REST/MCP + the compatibility gate
 ```
 
 The remaining `tests/verify_*.py` files are regression suites (Ask flows, model
@@ -764,22 +864,27 @@ against the neutral fixture repos in `fixtures/`.
 
 The following are not claimed as complete in the current build:
 
-**v2 enterprise knowledge layer.** Two foundation phases have shipped:
+**v2 enterprise knowledge layer.** Three phases have shipped:
 Phase 1 is the tool-first runtime
-([docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md)), and
+([docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md)),
 Phase 2 is the canonical **Asset / Revision / Segment / Evidence** model plus the
 immutable content store
-([docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md)). The following
-later-phase items are **not** implemented; the foundation creates extension
-points for them rather than building them:
+([docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md)), and Phase 3
+is the deterministic **document-ingestion** plane
+([docs/v2/phase-3-document-ingestion.md](docs/v2/phase-3-document-ingestion.md)).
+The following later-phase items are **not** implemented; the foundation creates
+extension points for them rather than building them:
 
+- Requirement, Business Rule, Design Decision and Acceptance Criterion
+  extraction; semantic document classification; document-authority inference;
 - Claim and Relation models;
 - the engineering Knowledge Graph and requirement-to-code traceability;
-- PDF, DOCX and XLSX parsing; OCR; COBOL and JCL support; requirement and
-  business-rule extraction;
+- **OCR** — image-only PDFs are *detected* and marked `needs-ocr`, never read;
+- COBOL, JCL, PPTX and email-archive parsing; Jira and Confluence connectors;
 - cloud model providers (OpenAI, Anthropic, Bedrock, Azure, Vertex) — the
   runtime remains local-first with no cloud credentials;
-- requirement-to-code traceability, conflict detection and branch overlays;
+- conflict detection and branch overlays;
+- historical (non-current-revision) document search;
 - webhook integration and a Bundle 2.0 artifact schema (export stays at
   schema 1.x);
 - a typed worker pool or job DAG replacing the current single-worker engine.
