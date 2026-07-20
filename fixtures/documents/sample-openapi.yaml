@@ -1,0 +1,64 @@
+openapi: 3.0.3
+info:
+  title: NameCheck API
+  version: 2.4.0
+  description: Screening API for the invented NameCheck service.
+servers:
+  - url: https://localhost/api
+paths:
+  /name-check:
+    post:
+      operationId: submitScreening
+      summary: Submit a name for screening
+      description: Returns a case id that the caller polls for the decision.
+      tags: [screening]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningRequest'
+      responses:
+        '202':
+          description: Screening accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreeningCase'
+        '400':
+          description: The submitted name was empty (NC-100)
+  /name-check/{caseId}:
+    parameters:
+      - name: caseId
+        in: path
+        required: true
+        description: The case identifier returned by submitScreening.
+        schema:
+          type: string
+    get:
+      operationId: getScreeningResult
+      summary: Read a screening decision
+      responses:
+        '200':
+          description: The decision
+        '404':
+          description: No such case
+components:
+  schemas:
+    ScreeningRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        countryCode:
+          type: string
+    ScreeningCase:
+      type: object
+      properties:
+        caseId:
+          type: string
+        status:
+          type: string
+          enum: [pending, cleared, review]

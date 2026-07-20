@@ -183,6 +183,70 @@ MAX_FILE_BYTES = 2_000_000  # skip files larger than this
 
 OCR_MAX_UPLOAD_BYTES = 50_000_000  # /ocr rejects larger image uploads (413) instead of buffering them
 
+# ---------------------------------------------------------------------------
+# Document ingestion policy (OpenMind v2 Phase 3)
+# ---------------------------------------------------------------------------
+# Code discovery and DOCUMENT discovery are separate policies on purpose. A
+# `.pdf` or `.docx` must never reach walker.read_text (it would decode binary
+# noise and index it as source), so no document extension is added to
+# INDEX_EXTENSIONS; the document walk has its own extension set, its own size
+# limit, and its own parser plane.
+CODE_INDEX_EXTENSIONS = INDEX_EXTENSIONS      # readable alias; same set, unchanged
+
+TEXT_DOCUMENT_EXTENSIONS = {
+    ".md", ".markdown", ".rst", ".adoc", ".asciidoc", ".txt",
+}
+BINARY_DOCUMENT_EXTENSIONS = {".docx", ".pdf", ".xlsx"}
+STRUCTURED_DOCUMENT_EXTENSIONS = {".csv", ".tsv"}
+
+#: Everything a document parser can claim when a user ATTACHES a file explicitly.
+#: Wider than the discovery set: `.html`, `.yaml`, `.json` and `.sql` documents
+#: are perfectly parseable on demand.
+DOCUMENT_EXTENSIONS = (TEXT_DOCUMENT_EXTENSIONS | BINARY_DOCUMENT_EXTENSIONS
+                       | STRUCTURED_DOCUMENT_EXTENSIONS
+                       | {".html", ".htm", ".yaml", ".yml", ".json", ".sql"})
+
+#: What a WORKSPACE walk discovers as a document. The subtraction is
+#: load-bearing: a file the code pipeline already owns (.html/.yaml/.json/.sql)
+#: must not also be ingested as a document, or one file would become two Assets.
+#: Those formats stay reachable through `openmind document add`.
+DOCUMENT_DISCOVERY_EXTENSIONS = (
+    (TEXT_DOCUMENT_EXTENSIONS | BINARY_DOCUMENT_EXTENSIONS
+     | STRUCTURED_DOCUMENT_EXTENSIONS) - CODE_INDEX_EXTENSIONS)
+
+
+def _int_env(name: str, default: int) -> int:
+    """An OPENMIND_* integer override, ignoring anything unparseable or <= 0 —
+    a typo must not silently disable a safety limit."""
+    try:
+        value = int(os.environ.get(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# Parser resource limits. Every one is enforced by the parser itself, and hitting
+# one produces status='partial' + an exact warning naming the limit — never a
+# silent truncation. Documents are untrusted input; these are the blast radius.
+DOCUMENT_MAX_BYTES = _int_env("OPENMIND_DOCUMENT_MAX_BYTES", 25_000_000)
+PDF_MAX_PAGES = _int_env("OPENMIND_PDF_MAX_PAGES", 2_000)
+DOCX_MAX_PARAGRAPHS = _int_env("OPENMIND_DOCX_MAX_PARAGRAPHS", 50_000)
+DOCX_MAX_TABLES = _int_env("OPENMIND_DOCX_MAX_TABLES", 2_000)
+XLSX_MAX_SHEETS = _int_env("OPENMIND_XLSX_MAX_SHEETS", 100)
+XLSX_MAX_ROWS_PER_SHEET = _int_env("OPENMIND_XLSX_MAX_ROWS_PER_SHEET", 20_000)
+XLSX_MAX_CELLS = _int_env("OPENMIND_XLSX_MAX_CELLS", 500_000)
+CSV_MAX_ROWS = _int_env("OPENMIND_CSV_MAX_ROWS", 50_000)
+DOCUMENT_MAX_BLOCKS = _int_env("OPENMIND_DOCUMENT_MAX_BLOCKS", 20_000)
+DOCUMENT_MAX_BLOCK_CHARS = _int_env("OPENMIND_DOCUMENT_MAX_BLOCK_CHARS", 20_000)
+
+# ZIP package safety for the OOXML formats (DOCX/XLSX). A document archive is
+# never extracted to a filesystem path; these bound what may be read INTO MEMORY
+# from an already-validated archive.
+ZIP_MAX_MEMBERS = _int_env("OPENMIND_ZIP_MAX_MEMBERS", 2_000)
+ZIP_MAX_TOTAL_BYTES = _int_env("OPENMIND_ZIP_MAX_TOTAL_BYTES", 400_000_000)
+ZIP_MAX_MEMBER_BYTES = _int_env("OPENMIND_ZIP_MAX_MEMBER_BYTES", 100_000_000)
+ZIP_MAX_RATIO = _int_env("OPENMIND_ZIP_MAX_RATIO", 200)
+
 # Template profiles (declarative framework/architecture lenses; see openmind.templates).
 # Built-ins ship with the package; users drop their own .yaml/.json into the
 # data-dir folder — same schema, user files override built-ins by name.
