@@ -658,7 +658,51 @@ each a few kilobytes.
 
 ---
 
-## 17. Deferred (Phase 4+) work
+## 17. Result
+
+Implemented as designed. The full suite, every tier:
+
+```
+python scripts/run_acceptance.py --all --json
+ok=true — 36 passed, 0 failed, 0 skipped   (1,568 individual checks)
+```
+
+| Script | Checks | Script | Checks |
+| --- | --- | --- | --- |
+| verify_document_registry | 42 | verify_document_search | 79 |
+| verify_document_parsers | 190 | verify_document_cli | 90 |
+| verify_document_security | 74 | verify_document_adapters | 93 |
+| verify_document_ingest | 102 | verify_migrations | 76 (was 64) |
+
+Schema head: **4**. MCP tool set: **19** (9 core + 4 Asset + 6 document), with
+the first thirteen unchanged. Artifact contract: **1.1.0**, unchanged.
+
+Five bugs the suites caught during implementation, all fixed:
+
+1. `DocumentBuilder.full` was a silent early-exit signal — a parser that broke
+   out of its loop produced a truncated document still labelled `parsed`.
+2. `decode_text` tried UTF-16 before the single-byte fallbacks, and a UTF-16
+   decode of arbitrary text succeeds whenever the length is even, silently
+   turning `caf\xe9 latte` into CJK mojibake.
+3. `cmd_document_add` mutated `ok`/`error` *after* emitting, so a
+   `possible_revision` printed `"ok": true` while exiting non-zero.
+4. `extract_terms` fed identifier COMPONENTS back as lexical terms, so
+   `REQ-NC-017` also matched `REQ-NC-018` and `REQ-NC-019`.
+5. A removed-then-reappeared document was reactivated but never re-indexed —
+   active in the database and invisible to search, which is the worst failure
+   mode because nothing looks wrong.
+
+Verified out of band as well: with `python-docx`, `pypdf`, `openpyxl` and
+`defusedxml` all blocked, the artifact export still runs, the registry still
+loads, Markdown/HTML/CSV still parse, and DOCX/PDF/XLSX report
+`dependency_unavailable` for the *right* parser. A database populated by the
+Phase 2 build and opened by this one migrates 3 → 4 with zero differences across
+projects, jobs, file index, assets, revisions, segments, evidence, Ask history,
+kv and project meta.
+
+---
+
+## 18. Deferred (Phase 4+) work
 
 Explicitly **not** implemented here, and never described as implemented:
 
