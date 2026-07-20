@@ -44,15 +44,30 @@ and puts the bytes fully under our control — which is what makes "this page ha
 no extractable text" and "this file is encrypted" reliable test inputs instead
 of a library's changing idea of them.
 
-### Why regeneration is byte-identical
+### What regeneration guarantees
 
-An unchanged document must produce **no new Revision**. A fixture whose bytes
+An unchanged document must produce **no new Revision**. A fixture whose *content*
 drifted between runs would change its content hash and make that guarantee
-untestable. So every timestamp is pinned to a fixed epoch, and the OOXML
-packages are rewritten with fixed member order, fixed member timestamps and
-fixed compression (`normalize_zip` in the generator) — `openpyxl` in particular
-overwrites `dcterms:modified` with the wall clock during `save()`, so that field
-is rewritten afterwards.
+untestable. So every timestamp is pinned to a fixed epoch, and the OOXML packages
+are rewritten with fixed member order and fixed member timestamps
+(`normalize_zip` in the generator) — `openpyxl` in particular overwrites
+`dcterms:modified` with the wall clock during `save()`, so that field is
+rewritten afterwards.
 
-Regenerating and committing should therefore produce an empty diff. If it does
-not, the generator changed and the change is real.
+The guarantee is **content**-level, and it differs by format for a reason:
+
+| Format | Reproducible | Why |
+| --- | --- | --- |
+| `.pdf` | byte for byte | the generator writes the bytes itself; no compressor is involved |
+| `.docx`, `.xlsx` | member for member | a DOCX/XLSX is a DEFLATE archive, and the compressed bytes depend on the platform's zlib build. Same parts in, different container bytes out. |
+
+So on the **same machine**, regenerating produces an empty diff. Regenerating on
+a *different platform* can legitimately change the OOXML container bytes while
+every part inside is identical — that is not drift, and CI compares the member
+map rather than the archive so it is not reported as such. Storing the archives
+uncompressed would make them byte-identical everywhere, but it inflates
+`sample-requirements.docx` from 37 KB to 832 KB, which is not a trade worth
+making for a test fixture.
+
+Nothing depends on the exact committed bytes: the tests hash the fixture at
+runtime, and no expected hash is written down anywhere.

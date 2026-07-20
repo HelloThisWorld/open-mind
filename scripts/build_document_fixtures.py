@@ -16,10 +16,18 @@ The three BINARY fixtures cannot be. They are generated instead:
 
 WHY DETERMINISM MATTERS HERE
 ----------------------------
-A fixture that changes byte-for-byte between runs would make the content hash
-change, and the whole point of the Asset model is that an unchanged document
-produces no new Revision. So every timestamp is fixed, every id is fixed, and no
-generator field is allowed to carry "now".
+A fixture whose CONTENT changes between runs would change its content hash, and
+the whole point of the Asset model is that an unchanged document produces no new
+Revision. So every timestamp is fixed, every id is fixed, and no generator field
+is allowed to carry "now".
+
+The achievable guarantee differs by format. The PDFs are byte-identical
+everywhere, because this file writes their bytes directly. A DOCX/XLSX is a
+DEFLATE archive, and the compressed container bytes depend on the platform's
+zlib build — so those are reproducible member-for-member, not byte-for-byte,
+across operating systems. CI compares them accordingly. Storing them
+uncompressed would buy true byte-identity at the cost of inflating the DOCX from
+37 KB to 832 KB, which is not worth it for a fixture.
 
 The PDFs are written by hand rather than with a PDF library: it keeps the
 repository free of a PDF *writing* dependency (we only need to *read* PDFs), the
@@ -40,7 +48,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO_ROOT / "fixtures" / "documents"
 
-#: Every generated timestamp. Fixed so a regenerated fixture is byte-identical.
+#: Every generated timestamp. Fixed so a regenerated fixture has identical
+#: content (see the module docstring on what "identical" means per format).
 EPOCH = _dt.datetime(2026, 1, 2, 3, 4, 5)
 
 
