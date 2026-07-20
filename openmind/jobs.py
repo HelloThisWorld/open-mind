@@ -415,12 +415,15 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
     """Stop any running job + FULL wipe to init (Invariant 5)."""
     _stop_project_jobs(project_id)
 
-    # 1) drop the code collection (delete-only; the next learn recreates it lazily —
-    # recreating an empty collection now is wasted work on a large project).
-    # cancel= matters even though this one is synchronous: without it a Ctrl+C
-    # during a large Terminate waits out the entire drain, which is exactly the
-    # dead-Ctrl+C symptom the batched drain was introduced to remove.
+    # 1) drop the code AND document collections (delete-only; the next learn
+    # recreates them lazily — recreating an empty collection now is wasted work
+    # on a large project). cancel= matters even though this one is synchronous:
+    # without it a Ctrl+C during a large Terminate waits out the entire drain,
+    # which is exactly the dead-Ctrl+C symptom the batched drain was introduced
+    # to remove.
     vectorstore.get_code_store(project_id).drop(cancel=_shutdown.is_set)
+    vectorstore.drop_collection(vectorstore.documents_collection_name(project_id),
+                                cancel=_shutdown.is_set)
     # 2) delete map/* and docs/*
     for sub in ("map", "docs"):
         d = config.project_dir(project_id) / sub
@@ -471,8 +474,9 @@ def _cleanup_deleted(project_id: str) -> None:
         _wait_jobs_stopped(project_id, timeout=30.0)
         if _shutdown.is_set():
             return                     # still 'deleting' -> resumed on next start
-        for name in (vectorstore.code_collection_name(project_id),
-                     vectorstore.cases_collection_name(project_id)):
+        # Every collection the project owns, from ONE list — so the delete path
+        # can never forget a collection kind the terminate path knows about.
+        for name in vectorstore.project_collection_names(project_id):
             if not vectorstore.drop_collection(name, cancel=_shutdown.is_set):
                 return                 # interrupted/failed -> retry on next start
         try:

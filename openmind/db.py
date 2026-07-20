@@ -636,8 +636,25 @@ def _segment_row(row: sqlite3.Row) -> Dict[str, Any]:
         "symbol": row["symbol"],
         "content_hash": row["content_hash"],
         "content_mode": row["content_mode"],
+        # v0004. Empty for code segments (they resolve through the revision
+        # blob's line range); the block-blob hash for document segments.
+        "content_blob_hash": _column(row, "content_blob_hash", ""),
         "metadata": json.loads(row["metadata_json"]),
     }
+
+
+def _column(row: sqlite3.Row, name: str, default: Any = None) -> Any:
+    """Read a column that a NEWER migration added.
+
+    A row read through an older cached statement, or in a test that builds a
+    partial row dict, may not carry it. Returning the default keeps a read
+    working instead of raising IndexError deep inside a mapper.
+    """
+    try:
+        value = row[name]
+    except (IndexError, KeyError):
+        return default
+    return default if value is None else value
 
 
 def _evidence_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -922,6 +939,236 @@ def clear_workspace_assets(workspace_id: str) -> None:
         _c().commit()
 
 
+# ---------------------------------------------------------------------------
+# Document projections (OpenMind v2 Phase 3)
+#
+# `document_parses` is a derived parse record over an immutable Revision, and
+# its PRESENCE for an Asset's current Revision is the definition of "this Asset
+# is a document" — a recorded fact, never an inference. `document_index` names
+# the vector chunks currently live for an Asset, so a new current Revision can
+# replace exactly its predecessor's chunks. Both are workspace-scoped at the SQL
+# level through a JOIN back to assets.workspace_id, exactly like the Phase 2
+# reads above.
+# ---------------------------------------------------------------------------
+def _document_parse_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "revision_id": row["revision_id"],
+        "parser_name": row["parser_name"],
+        "parser_version": row["parser_version"],
+        "schema_version": row["schema_version"],
+        "status": row["status"],
+        "title": row["title"],
+        "media_type": row["media_type"],
+        "metadata": json.loads(row["metadata_json"]),
+        "warnings": json.loads(row["warnings_json"]),
+        "unsupported_content": json.loads(row["unsupported_json"]),
+        "coverage": json.loads(row["coverage_json"]),
+        "structure_hash": row["structure_hash"],
+        "created_at": row["created_at"],
+    }
+
+
+def get_document_parse(workspace_id: str,
+                       revision_id: str) -> Optional[Dict[str, Any]]:
+    with _lock:
+        row = _c().execute(
+            "SELECT d.* FROM document_parses d "
+            "JOIN asset_revisions r ON d.revision_id=r.id "
+            "JOIN assets a ON r.asset_id=a.id "
+            "WHERE d.revision_id=? AND a.workspace_id=?",
+            (revision_id, workspace_id),
+        ).fetchone()
+    return _document_parse_row(row) if row else None
+
+
+def list_document_assets(workspace_id: str, status: Optional[str] = None,
+                         parser: Optional[str] = None,
+                         state: Optional[str] = "active",
+                         limit: int = 100,
+                         offset: int = 0) -> List[Dict[str, Any]]:
+    """Assets whose CURRENT revision has a parse record, newest-updated first.
+
+    The join to ``document_parses`` on the asset's current revision is what
+    makes "is a document" a fact rather than a guess from the file extension.
+    """
+    q = ("SELECT a.*, d.parser_name AS d_parser, d.status AS d_status, "
+         "d.title AS d_title, d.media_type AS d_media, "
+         "d.coverage_json AS d_coverage, d.created_at AS d_parsed_at "
+         "FROM assets a "
+         "JOIN document_parses d ON d.revision_id = a.current_revision_id "
+         "WHERE a.workspace_id=?")
+    args: List[Any] = [workspace_id]
+    if state:
+        q += " AND a.state=?"
+        args.append(state)
+    if status:
+        q += " AND d.status=?"
+        args.append(status)
+    if parser:
+        q += " AND d.parser_name=?"
+        args.append(parser)
+    q += " ORDER BY a.logical_key LIMIT ? OFFSET ?"
+    args.extend([max(0, int(limit)), max(0, int(offset))])
+    with _lock:
+        rows = _c().execute(q, args).fetchall()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        record = _asset_row(r)
+        record["document"] = {
+            "parser_name": r["d_parser"], "status": r["d_status"],
+            "title": r["d_title"], "media_type": r["d_media"],
+            "coverage": json.loads(r["d_coverage"] or "{}"),
+            "parsed_at": r["d_parsed_at"],
+        }
+        out.append(record)
+    return out
+
+
+def count_document_assets(workspace_id: str, status: Optional[str] = None,
+                          parser: Optional[str] = None,
+                          state: Optional[str] = "active") -> int:
+    q = ("SELECT COUNT(*) FROM assets a "
+         "JOIN document_parses d ON d.revision_id = a.current_revision_id "
+         "WHERE a.workspace_id=?")
+    args: List[Any] = [workspace_id]
+    if state:
+        q += " AND a.state=?"
+        args.append(state)
+    if status:
+        q += " AND d.status=?"
+        args.append(status)
+    if parser:
+        q += " AND d.parser_name=?"
+        args.append(parser)
+    with _lock:
+        row = _c().execute(q, args).fetchone()
+    return int(row[0]) if row else 0
+
+
+def find_document_revision_by_content_hash(
+        workspace_id: str, content_hash: str) -> Optional[Dict[str, Any]]:
+    """The first DOCUMENT revision in this workspace with exactly these bytes.
+
+    This is the duplicate gate: identical content already ingested as a document
+    must create no job, no revision and no vector duplicate. Restricted to
+    revisions that HAVE a parse record, so a code file that happens to share a
+    hash never masquerades as an already-imported document.
+    """
+    if not content_hash:
+        return None
+    with _lock:
+        row = _c().execute(
+            "SELECT r.*, a.id AS a_id, a.logical_key AS a_key, "
+            "a.state AS a_state FROM asset_revisions r "
+            "JOIN assets a ON r.asset_id=a.id "
+            "JOIN document_parses d ON d.revision_id=r.id "
+            "WHERE a.workspace_id=? AND r.content_hash=? "
+            "ORDER BY r.created_at LIMIT 1",
+            (workspace_id, content_hash),
+        ).fetchone()
+    if not row:
+        return None
+    out = _revision_row(row)
+    out["asset_id"] = row["a_id"]
+    out["logical_key"] = row["a_key"]
+    out["asset_state"] = row["a_state"]
+    return out
+
+
+def is_document_asset(workspace_id: str, asset_id: str) -> bool:
+    """Whether this Asset's CURRENT revision carries a parse record."""
+    with _lock:
+        row = _c().execute(
+            "SELECT 1 FROM assets a "
+            "JOIN document_parses d ON d.revision_id = a.current_revision_id "
+            "WHERE a.id=? AND a.workspace_id=?", (asset_id, workspace_id),
+        ).fetchone()
+    return row is not None
+
+
+def get_document_index(workspace_id: str,
+                       asset_id: str) -> Optional[Dict[str, Any]]:
+    with _lock:
+        row = _c().execute(
+            "SELECT * FROM document_index WHERE workspace_id=? AND asset_id=?",
+            (workspace_id, asset_id),
+        ).fetchone()
+    if not row:
+        return None
+    return {"workspace_id": row["workspace_id"], "asset_id": row["asset_id"],
+            "revision_id": row["revision_id"],
+            "chunk_ids": json.loads(row["chunk_ids_json"]),
+            "updated_at": row["updated_at"]}
+
+
+def list_document_index(workspace_id: str) -> Dict[str, Dict[str, Any]]:
+    """asset_id -> index record for the whole workspace, in one query."""
+    with _lock:
+        rows = _c().execute(
+            "SELECT * FROM document_index WHERE workspace_id=?",
+            (workspace_id,)).fetchall()
+    return {r["asset_id"]: {"asset_id": r["asset_id"],
+                            "revision_id": r["revision_id"],
+                            "chunk_ids": json.loads(r["chunk_ids_json"]),
+                            "updated_at": r["updated_at"]} for r in rows}
+
+
+def delete_document_index(workspace_id: str, asset_id: str) -> None:
+    """Forget an Asset's live chunk list (its document was removed).
+
+    The Asset, its Revisions, Segments, Evidence and blobs are all PRESERVED —
+    only the active retrieval projection goes.
+    """
+    with _lock:
+        _c().execute(
+            "DELETE FROM document_index WHERE workspace_id=? AND asset_id=?",
+            (workspace_id, asset_id))
+        _c().commit()
+
+
+def document_stats(workspace_id: str) -> Dict[str, Any]:
+    """Aggregate document counts for the workspace, by parse status."""
+    with _lock:
+        c = _c()
+        total = c.execute(
+            "SELECT COUNT(*) FROM assets a JOIN document_parses d "
+            "ON d.revision_id = a.current_revision_id WHERE a.workspace_id=?",
+            (workspace_id,)).fetchone()[0]
+        rows = c.execute(
+            "SELECT d.status AS s, COUNT(*) AS n FROM assets a "
+            "JOIN document_parses d ON d.revision_id = a.current_revision_id "
+            "WHERE a.workspace_id=? GROUP BY d.status", (workspace_id,)).fetchall()
+        indexed = c.execute(
+            "SELECT COUNT(*) FROM document_index WHERE workspace_id=?",
+            (workspace_id,)).fetchone()[0]
+    return {"documents_total": int(total), "documents_indexed": int(indexed),
+            "by_status": {r["s"]: int(r["n"]) for r in rows}}
+
+
+# ---------------------------------------------------------------------------
+# Job payload (v0004) — a job's structured input, kept out of the free `path`
+# column (which already means something different per job type) and guaranteed
+# to carry NO absolute machine path.
+# ---------------------------------------------------------------------------
+def get_job_payload(job_id: str) -> Dict[str, Any]:
+    with _lock:
+        row = _c().execute("SELECT payload_json FROM jobs WHERE job_id=?",
+                           (job_id,)).fetchone()
+    if not row:
+        return {}
+    try:
+        return json.loads(row["payload_json"] or "{}")
+    except Exception:
+        return {}
+
+
+def set_job_payload(job_id: str, payload: Dict[str, Any]) -> None:
+    with _lock:
+        _c().execute("UPDATE jobs SET payload_json=?, updated_at=? "
+                     "WHERE job_id=?", (json.dumps(payload), now(), job_id))
+        _c().commit()
+
+
 def commit_revision(
     workspace_id: str,
     logical_key: str,
@@ -941,6 +1188,10 @@ def commit_revision(
     revision_metadata: Optional[Dict[str, Any]] = None,
     asset_metadata: Optional[Dict[str, Any]] = None,
     asset_state: str = "active",
+    document_parse: Optional[Dict[str, Any]] = None,
+    document_chunk_ids: Optional[List[str]] = None,
+    asset_id: Optional[str] = None,
+    revision_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The single transactional writer for the Asset model.
 
@@ -959,6 +1210,25 @@ def commit_revision(
     ``{locator, excerpt, content_hash}``. Returns a summary:
     ``{asset_id, revision, revision_created, asset_created, reactivated,
        segments_created, evidence_created}``.
+
+    DOCUMENT PROJECTIONS (v2 Phase 3)
+    --------------------------------
+    ``document_parse`` and ``document_chunk_ids`` are written INSIDE the same
+    transaction, deliberately. A ``document_parses`` row committed separately
+    could survive a rolled-back revision (a parse record for a revision that
+    does not exist), and a ``document_index`` row committed separately could
+    point at chunks belonging to a revision that never became current. Both are
+    keyed to the revision this call mints, so either everything lands or nothing
+    does.
+
+    PRE-MINTED IDS
+    --------------
+    ``asset_id`` / ``revision_id`` (and a per-draft ``id`` on a segment or its
+    evidence) let a caller supply the identifiers instead of having them minted
+    here. The document pipeline needs that: its vector chunks carry the segment
+    and evidence ids in their metadata and are upserted BEFORE the transaction,
+    so those ids have to exist first. A supplied ``asset_id`` is used only when
+    the Asset does not already exist.
     """
     ts = now()
     rev_meta = json.dumps(revision_metadata or {})
@@ -974,7 +1244,7 @@ def commit_revision(
             asset_created = False
 
             if existing is not None:
-                asset_id = existing["id"]
+                resolved_asset_id = existing["id"]
                 cur_rev_id = existing["current_revision_id"]
                 cur_hash = None
                 if cur_rev_id:
@@ -989,7 +1259,7 @@ def commit_revision(
                         reactivated = existing["state"] == "removed"
                         c.execute(
                             "UPDATE assets SET state=?, updated_at=? WHERE id=?",
-                            (asset_state, ts, asset_id))
+                            (asset_state, ts, resolved_asset_id))
                         c.commit()
                     else:
                         c.commit()
@@ -997,7 +1267,7 @@ def commit_revision(
                         "SELECT * FROM asset_revisions WHERE id=?",
                         (cur_rev_id,)).fetchone()
                     return {
-                        "asset_id": asset_id,
+                        "asset_id": resolved_asset_id,
                         "revision": _revision_row(rev) if rev else None,
                         "revision_created": False, "asset_created": False,
                         "reactivated": reactivated,
@@ -1008,7 +1278,7 @@ def commit_revision(
                 reactivated = existing["state"] == "removed"
                 supersedes = cur_rev_id
             else:
-                asset_id = new_id("a_")
+                resolved_asset_id = asset_id or new_id("a_")
                 asset_created = True
                 supersedes = None
                 c.execute(
@@ -1016,17 +1286,19 @@ def commit_revision(
                     "title,source_kind,source_path,media_type,state,"
                     "current_revision_id,metadata_json,created_at,updated_at) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (asset_id, workspace_id, logical_key, asset_type, title,
-                     source_kind, source_path, media_type, asset_state, None,
-                     json.dumps(asset_metadata or {}), ts, ts))
+                    (resolved_asset_id, workspace_id, logical_key, asset_type,
+                     title, source_kind, source_path, media_type, asset_state,
+                     None, json.dumps(asset_metadata or {}), ts, ts))
 
             # next dense sequence for this asset
             seq_row = c.execute(
-                "SELECT COALESCE(MAX(sequence),0) FROM asset_revisions WHERE asset_id=?",
-                (asset_id,)).fetchone()
+                "SELECT COALESCE(MAX(sequence),0) FROM asset_revisions "
+                "WHERE asset_id=?", (resolved_asset_id,)).fetchone()
             sequence = int(seq_row[0]) + 1
 
-            revision_id = new_id("r_")
+            new_revision_id = revision_id or new_id("r_")
+            revision_id = new_revision_id
+            asset_id = resolved_asset_id
             c.execute(
                 "INSERT INTO asset_revisions (id,asset_id,sequence,content_hash,"
                 "content_size,content_blob_hash,status,version_label,source_commit,"
@@ -1039,15 +1311,16 @@ def commit_revision(
             seg_count = 0
             ev_count = 0
             for seg in segments:
-                seg_id = new_id("s_")
+                seg_id = seg.get("id") or new_id("s_")
                 c.execute(
                     "INSERT INTO segments (id,revision_id,segment_key,segment_type,"
                     "ordinal,start_line,end_line,symbol,content_hash,content_mode,"
-                    "metadata_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "content_blob_hash,metadata_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (seg_id, revision_id, seg["segment_key"], seg["segment_type"],
                      int(seg["ordinal"]), seg.get("start_line"), seg.get("end_line"),
                      seg.get("symbol", ""), seg.get("content_hash", ""),
                      seg.get("content_mode", "verbatim"),
+                     seg.get("content_blob_hash", ""),
                      json.dumps(seg.get("metadata") or {})))
                 seg_count += 1
                 ev = seg.get("evidence")
@@ -1055,10 +1328,40 @@ def commit_revision(
                     c.execute(
                         "INSERT INTO evidence (id,revision_id,segment_id,locator_json,"
                         "excerpt,content_hash,created_at) VALUES (?,?,?,?,?,?,?)",
-                        (new_id("e_"), revision_id, seg_id,
+                        (ev.get("id") or new_id("e_"), revision_id, seg_id,
                          json.dumps(ev.get("locator") or {}), ev.get("excerpt", ""),
                          ev.get("content_hash", ""), ts))
                     ev_count += 1
+
+            if document_parse is not None:
+                c.execute(
+                    "INSERT INTO document_parses (revision_id,parser_name,"
+                    "parser_version,schema_version,status,title,media_type,"
+                    "metadata_json,warnings_json,unsupported_json,coverage_json,"
+                    "structure_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (revision_id,
+                     document_parse.get("parser_name", ""),
+                     document_parse.get("parser_version", ""),
+                     document_parse.get("schema_version", ""),
+                     document_parse.get("status", ""),
+                     document_parse.get("title", ""),
+                     document_parse.get("media_type", ""),
+                     json.dumps(document_parse.get("metadata") or {}),
+                     json.dumps(document_parse.get("warnings") or []),
+                     json.dumps(document_parse.get("unsupported_content") or []),
+                     json.dumps(document_parse.get("coverage") or {}),
+                     document_parse.get("structure_hash", ""), ts))
+
+            if document_chunk_ids is not None:
+                c.execute(
+                    "INSERT INTO document_index (workspace_id,asset_id,"
+                    "revision_id,chunk_ids_json,updated_at) VALUES (?,?,?,?,?) "
+                    "ON CONFLICT(workspace_id,asset_id) DO UPDATE SET "
+                    "revision_id=excluded.revision_id, "
+                    "chunk_ids_json=excluded.chunk_ids_json, "
+                    "updated_at=excluded.updated_at",
+                    (workspace_id, asset_id, revision_id,
+                     json.dumps(list(document_chunk_ids)), ts))
 
             if supersedes:
                 c.execute(

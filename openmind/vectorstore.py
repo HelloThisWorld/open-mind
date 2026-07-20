@@ -534,6 +534,16 @@ def cases_collection_name(project_id: str) -> str:
     return f"cases_{project_id}"
 
 
+def documents_collection_name(project_id: str) -> str:
+    """The DOCUMENT block collection (OpenMind v2 Phase 3).
+
+    Separate from ``code_<pid>`` on purpose: mixing document chunks into the code
+    collection would silently change what the existing ``search`` tool returns,
+    and that contract is depended on by external MCP clients.
+    """
+    return f"documents_{project_id}"
+
+
 def count_collection(collection_name: str) -> int:
     """Row count for a collection that may not exist yet — 0 if it doesn't.
 
@@ -560,8 +570,26 @@ def get_cases_store(project_id: str) -> _Store:
     return get_store(cases_collection_name(project_id))
 
 
+def get_documents_store(project_id: str) -> _Store:
+    return get_store(documents_collection_name(project_id))
+
+
+#: Every per-project collection prefix. `documents_` MUST be listed here or the
+#: startup orphan sweep would not recognize a document collection as belonging
+#: to a project, and would leave it behind forever after a project delete.
+#: Longest-first, so `code_` cannot shadow a future prefix that starts with it.
+_COLLECTION_PREFIXES = ("documents_", "cases_", "code_")
+
+
+def project_collection_names(project_id: str) -> List[str]:
+    """Every collection a project owns. One list, so the delete path, the
+    terminate path and the orphan sweep can never drift apart about which
+    collections exist."""
+    return [prefix + project_id for prefix in _COLLECTION_PREFIXES]
+
+
 def _pid_of(collection_name: str) -> Optional[str]:
-    for prefix in ("code_", "cases_"):
+    for prefix in _COLLECTION_PREFIXES:
         if collection_name.startswith(prefix):
             return collection_name[len(prefix):]
     return None
