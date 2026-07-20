@@ -533,6 +533,263 @@ def cmd_asset_add(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str,
     return EXIT_OK, payload
 
 
+# ---------------------------------------------------------------------------
+# Documents (OpenMind v2 Phase 3)
+# ---------------------------------------------------------------------------
+def cmd_document_add(args: argparse.Namespace,
+                     out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Append a document from anywhere on this machine.
+
+    The import DECISION is part of the result, not a hidden detail: an exact
+    duplicate, a filename collision needing the user's choice, and a real new
+    revision are three different outcomes and are reported as such.
+    """
+    from .runtime import get_runtime
+    from .domain.types import ImportStatus
+
+    if sum(bool(x) for x in (args.asset, args.logical_key, args.new_asset)) > 1:
+        raise InvalidRequest(
+            "--asset, --logical-key and --new-asset are mutually exclusive: "
+            "each names a DIFFERENT target for these bytes, so combining them "
+            "has no single correct meaning",
+            details={"asset": args.asset, "logical_key": args.logical_key,
+                     "new_asset": args.new_asset})
+
+    runtime = get_runtime()
+    if args.wait and not args.dry_run:
+        out.say("Starting the job worker...")
+    try:
+        result = runtime.documents.add_document(
+            args.workspace, args.path, asset_id=args.asset or "",
+            logical_key=args.logical_key or "", new_asset=bool(args.new_asset),
+            version_label=args.version_label or "", wait=args.wait,
+            timeout=args.timeout, dry_run=bool(args.dry_run))
+    except OperationTimeout as exc:
+        out.warn(str(exc))
+        payload = {"ok": False, "error": exc.as_dict()}
+        payload.update(exc.details)
+        return EXIT_TIMEOUT, payload
+
+    payload = _ok(result)
+    status = result.get("status", "")
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['status']}  {p.get('logical_key', '')}")
+        if p.get("reason"):
+            print(f"  {p['reason']}")
+        guidance = p.get("guidance") or {}
+        if guidance:
+            print("  resolve it with ONE of:")
+            print(f"    --asset {p['possible_asset']['id']}"
+                  f"      (these bytes are a new revision of that document)")
+            print(f"    --new-asset"
+                  f"                  (this is a different document; it will "
+                  f"become {guidance['suggested_new_key']})")
+            print(f"    --logical-key <key>       (name it yourself)")
+        report = p.get("import_report") or {}
+        if report:
+            print(f"  parser:    {report.get('parser')} "
+                  f"({report.get('parse_status')})")
+            print(f"  asset:     {report.get('asset_id')}")
+            print(f"  revision:  {report.get('revision_id')} "
+                  f"(seq {report.get('revision_sequence')})")
+            print(f"  segments:  {report.get('segments_created')} "
+                  f"({report.get('blocks_indexed')} indexed)")
+            if report.get("version_label"):
+                print(f"  version:   {report['version_label']} "
+                      f"({report.get('version_label_source')})")
+            for warning in report.get("warnings") or []:
+                print(f"  warning:   {warning['code']}: {warning['message']}")
+            for entry in report.get("unsupported_content") or []:
+                print(f"  not read:  {entry['kind']} x{entry['count']}")
+            related = report.get("related_candidates") or {}
+            if related.get("count"):
+                print(f"  candidates: {related['count']} related CANDIDATE(s) "
+                      f"— observed mentions, not confirmed relations:")
+                for candidate in related.get("top", []):
+                    target = (candidate["target"].get("logical_key")
+                              or candidate["target"].get("symbol") or "")
+                    print(f"    {candidate['confidence']:6} "
+                          f"{candidate['candidate_type']:24} {target}")
+        elif p.get("job_id"):
+            print(f"  job: {p['job_id']}")
+
+    out.emit(payload, human)
+
+    if status == ImportStatus.POSSIBLE_REVISION:
+        # Nothing was written and the user must choose. A zero exit here would
+        # let a script believe the document was imported.
+        payload["ok"] = False
+        payload["error"] = {
+            "code": "possible_revision",
+            "message": result.get("reason", "a different document already uses "
+                                             "that key"),
+            "details": {"possible_asset_id": (result.get("possible_asset")
+                                              or {}).get("id", ""),
+                        "guidance": result.get("guidance", {})},
+        }
+        return EXIT_DOMAIN_FAILURE, payload
+    if status == ImportStatus.UNSUPPORTED:
+        payload["ok"] = False
+        payload["error"] = {"code": "unsupported_document",
+                            "message": result.get("reason", "unsupported")}
+        return EXIT_DOMAIN_FAILURE, payload
+    if result.get("waited") and not result.get("completed"):
+        payload["ok"] = False
+        payload["error"] = result.get("error") or {
+            "code": "job_failed",
+            "message": f"document import did not complete "
+                       f"(status: {result.get('status_job')})"}
+        return EXIT_JOB_FAILURE, payload
+    return EXIT_OK, payload
+
+
+def cmd_document_list(args: argparse.Namespace,
+                      out: Output) -> Tuple[int, Dict[str, Any]]:
+    """List the workspace's document assets (bounded)."""
+    from .runtime import get_runtime
+
+    result = get_runtime().documents.list_documents(
+        args.workspace, status=args.status, parser=args.parser,
+        state=args.state, limit=args.limit, offset=args.offset)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} of {p['total']} document(s):")
+        for record in p["documents"]:
+            info = record.get("document") or {}
+            print(f"  {record['id']}  {info.get('status', ''):11} "
+                  f"{info.get('parser_name', ''):12} {record['logical_key']}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_document_show(args: argparse.Namespace,
+                      out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Show one document: asset, current revision and parse summary."""
+    from .runtime import get_runtime
+
+    document = get_runtime().documents.get_document(args.workspace, args.asset)
+    payload = _ok({"document": document})
+
+    def human(p: Dict[str, Any]) -> None:
+        d = p["document"]
+        parse = d["parse"]
+        print(f"{d['logical_key']}  ({d['id']})")
+        print(f"  title:     {parse['title']}")
+        print(f"  parser:    {parse['parser_name']} {parse['parser_version']} "
+              f"-> {parse['status']}")
+        print(f"  media:     {parse['media_type']}")
+        print(f"  state:     {d['state']}  (source: {d['source_kind']})")
+        current = d.get("current_revision") or {}
+        if current:
+            print(f"  revision:  {current['id']} (seq {current['sequence']}, "
+                  f"{current['segment_count']} segment(s))")
+            if current.get("version_label"):
+                print(f"  version:   {current['version_label']}")
+        print(f"  indexed:   {d['index']['chunk_count']} chunk(s)")
+        for key, value in sorted((parse.get("coverage") or {}).items()):
+            print(f"  coverage.{key}: {value}")
+        for warning in parse.get("warnings") or []:
+            print(f"  warning:   {warning['code']}: {warning['message']}")
+        for entry in parse.get("unsupported_content") or []:
+            print(f"  not read:  {entry['kind']} x{entry['count']}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_document_outline(args: argparse.Namespace,
+                         out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Print a bounded STRUCTURAL outline of a document revision."""
+    from .runtime import get_runtime
+
+    result = get_runtime().documents.get_outline(
+        args.workspace, args.revision, limit=args.limit)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} of {p['total']} block(s) in revision "
+              f"{p['revision_id']}  ({p['parse']['parser_name']}):")
+        for entry in p["outline"]:
+            depth = len(entry.get("heading_path") or [])
+            indent = "  " * min(depth, 6)
+            print(f"  {indent}{entry['block_type']:12} {entry['preview']}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_document_search(args: argparse.Namespace,
+                        out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Search the workspace's documents."""
+    from .runtime import get_runtime
+
+    result = get_runtime().documents.search(
+        args.workspace, args.query, limit=args.limit, parser=args.parser,
+        block_type=args.block_type, logical_key=args.logical_key)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} hit(s)  [{p['query_mode']}]")
+        for hit in p["hits"]:
+            print(f"  {hit['logical_key']}  {hit['block_type']}  "
+                  f"({', '.join(hit['retrieval_sources'])})")
+            print(f"    evidence {hit['evidence_id']}: {hit['excerpt'][:160]}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_document_related(args: argparse.Namespace,
+                         out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Deterministic candidate associations for one document."""
+    from .runtime import get_runtime
+
+    result = get_runtime().documents.find_related_candidates(
+        args.workspace, args.asset, limit=args.limit)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"{p['count']} CANDIDATE(s) — observed mentions, NOT confirmed "
+              f"relations:")
+        for candidate in p["candidates"]:
+            target = (candidate["target"].get("logical_key")
+                      or candidate["target"].get("symbol") or "")
+            print(f"  {candidate['confidence']:6} "
+                  f"{candidate['candidate_type']:26} {candidate['mention'][:28]:30} "
+                  f"-> {target}")
+            print(f"         {candidate['reason']}")
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
+def cmd_knowledge_search(args: argparse.Namespace,
+                         out: Output) -> Tuple[int, Dict[str, Any]]:
+    """Search code and documents together, reported separately."""
+    from .runtime import get_runtime
+
+    result = get_runtime().documents.search_knowledge(
+        args.workspace, args.query, code_limit=args.limit,
+        document_limit=args.limit)
+    payload = _ok(result)
+
+    def human(p: Dict[str, Any]) -> None:
+        print(f"code: {p['grounding']['codeCount']} hit(s)")
+        for chunk in p["code"]["hits"]:
+            print(f"  {chunk.get('file_path', '')}  {chunk.get('symbol', '')}")
+        print(f"documents: {p['grounding']['documentCount']} hit(s)")
+        for hit in p["documents"]["hits"]:
+            print(f"  {hit['logical_key']}  {hit['block_type']}: "
+                  f"{hit['excerpt'][:120]}")
+        print(p["grounding"]["note"])
+
+    out.emit(payload, human)
+    return EXIT_OK, payload
+
+
 def cmd_export(args: argparse.Namespace, out: Output) -> Tuple[int, Dict[str, Any]]:
     """Generate the deterministic ``.openmind`` artifact directory.
 
@@ -783,6 +1040,104 @@ def build_parser() -> argparse.ArgumentParser:
     a_add.set_defaults(func=cmd_asset_add)
 
     asset.set_defaults(func=None, _parser=asset)
+
+    # -- documents (v2 Phase 3) --------------------------------------------
+    document = sub.add_parser("document", parents=[common],
+                              help="append and query enterprise documents")
+    document_sub = document.add_subparsers(dest="document_command",
+                                           metavar="<subcommand>")
+
+    d_add = document_sub.add_parser(
+        "add", parents=[common],
+        help="append a document from anywhere on this machine")
+    d_add.add_argument("--workspace", required=True, help="workspace id")
+    d_add.add_argument("--path", required=True, help="the document file")
+    # Mutually exclusive in MEANING as well as in the parser: each names a
+    # different target for the same bytes.
+    d_target = d_add.add_mutually_exclusive_group()
+    d_target.add_argument("--asset", metavar="ASSET_ID",
+                          help="treat the bytes as a new revision of this asset")
+    d_target.add_argument("--logical-key", dest="logical_key", metavar="KEY",
+                          help="find or create the asset with this key")
+    d_target.add_argument("--new-asset", dest="new_asset", action="store_true",
+                          help="create a distinct asset with a deterministic key")
+    d_add.add_argument("--version-label", dest="version_label", metavar="LABEL",
+                       help="explicit version label for the new revision")
+    d_add.add_argument("--wait", action="store_true",
+                       help="wait for the import job to finish")
+    d_add.add_argument("--timeout", type=float, default=3600.0,
+                       metavar="SECONDS", help="bound for --wait (default: 3600)")
+    d_add.add_argument("--dry-run", dest="dry_run", action="store_true",
+                       help="report the import plan and store nothing")
+    d_add.set_defaults(func=cmd_document_add)
+
+    d_list = document_sub.add_parser("list", parents=[common],
+                                     help="list document assets (bounded)")
+    d_list.add_argument("--workspace", required=True, help="workspace id")
+    d_list.add_argument("--status", help="filter by parse status "
+                                         "(parsed/partial/needs-ocr/...)")
+    d_list.add_argument("--parser", help="filter by parser name")
+    d_list.add_argument("--state", default="active",
+                        help="asset state (default: active)")
+    d_list.add_argument("--limit", type=int, default=100, metavar="N",
+                        help="max documents to return (default: 100)")
+    d_list.add_argument("--offset", type=int, default=0, metavar="N",
+                        help="skip the first N (default: 0)")
+    d_list.set_defaults(func=cmd_document_list)
+
+    d_show = document_sub.add_parser(
+        "show", parents=[common],
+        help="show one document, its current revision and parse summary")
+    d_show.add_argument("--workspace", required=True, help="workspace id")
+    d_show.add_argument("--asset", required=True, help="document asset id")
+    d_show.set_defaults(func=cmd_document_show)
+
+    d_outline = document_sub.add_parser(
+        "outline", parents=[common],
+        help="bounded structural outline of a document revision")
+    d_outline.add_argument("--workspace", required=True, help="workspace id")
+    d_outline.add_argument("--revision", required=True, help="revision id")
+    d_outline.add_argument("--limit", type=int, default=500, metavar="N",
+                           help="max blocks to return (default: 500)")
+    d_outline.set_defaults(func=cmd_document_outline)
+
+    d_search = document_sub.add_parser("search", parents=[common],
+                                       help="search the workspace's documents")
+    d_search.add_argument("--workspace", required=True, help="workspace id")
+    d_search.add_argument("--query", required=True, help="the search query")
+    d_search.add_argument("--limit", type=int, default=20, metavar="N",
+                          help="max hits to return (default: 20)")
+    d_search.add_argument("--parser", help="filter by parser name")
+    d_search.add_argument("--block-type", dest="block_type",
+                          help="filter by block type")
+    d_search.add_argument("--logical-key", dest="logical_key",
+                          help="restrict to one document")
+    d_search.set_defaults(func=cmd_document_search)
+
+    d_related = document_sub.add_parser(
+        "related", parents=[common],
+        help="deterministic candidate associations for one document")
+    d_related.add_argument("--workspace", required=True, help="workspace id")
+    d_related.add_argument("--asset", required=True, help="document asset id")
+    d_related.add_argument("--limit", type=int, default=30, metavar="N",
+                           help="max candidates to return (default: 30)")
+    d_related.set_defaults(func=cmd_document_related)
+
+    document.set_defaults(func=None, _parser=document)
+
+    knowledge = sub.add_parser("knowledge", parents=[common],
+                               help="query code and documents together")
+    knowledge_sub = knowledge.add_subparsers(dest="knowledge_command",
+                                             metavar="<subcommand>")
+    k_search = knowledge_sub.add_parser(
+        "search", parents=[common],
+        help="search code and documents, reported separately")
+    k_search.add_argument("--workspace", required=True, help="workspace id")
+    k_search.add_argument("--query", required=True, help="the search query")
+    k_search.add_argument("--limit", type=int, default=12, metavar="N",
+                          help="max hits per side (default: 12)")
+    k_search.set_defaults(func=cmd_knowledge_search)
+    knowledge.set_defaults(func=None, _parser=knowledge)
 
     serve = sub.add_parser("serve", parents=[common],
                            help="run the FastAPI web application")
