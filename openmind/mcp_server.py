@@ -3,7 +3,10 @@
 Exposes the read/query surface a client (your editor, agent, or the CLI) needs —
 all in-process, all local:
   search, route, dispatch, get_glossary, find_similar_cases, save_case, get_doc,
-  propose_fix, apply_fix.
+  propose_fix, apply_fix
+plus the additive read-only Asset tools (v2 Phase 2) and document tools
+(v2 Phase 3). The original nine are a frozen contract; new capabilities are
+ADDED beside them, never by changing one.
 
 Run:  python -m openmind.mcp_server
       openmind mcp serve            (identical; the CLI calls straight into here)
@@ -263,6 +266,129 @@ ASSET_TOOL_NAMES = tuple(fn.__name__ for fn in ASSET_TOOLS)
 
 
 # ---------------------------------------------------------------------------
+# Document tools (OpenMind v2 Phase 3) — ADDITIVE and READ-ONLY.
+#
+# There is deliberately NO document-write tool. Importing a document reads a
+# local file, stages an immutable blob and enqueues a job; exposing that over
+# MCP would let a client make a server-side process read an arbitrary path it
+# chose. Claude Code can drive `openmind document add` through its shell, where
+# the user sees the command. Merely listing these tools never starts the worker.
+#
+# Every result is bounded, workspace-scoped, evidence-cited, and explicit about
+# candidate-versus-confirmed status.
+# ---------------------------------------------------------------------------
+def list_documents(scope: str, status: Optional[str] = None,
+                   parser: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+    """List a workspace's DOCUMENT assets (bounded).
+
+    A document is an Asset whose current revision has a recorded parse result —
+    a fact, not a guess from the file extension. ``status`` filters on that parse
+    status (parsed / partial / needs-ocr / encrypted / unsupported / failed), so
+    you can ask which documents were only partially read."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().documents.list_documents(
+        pid, status=status, parser=parser, limit=limit)
+
+
+def get_document(scope: str, asset_id: str) -> Dict[str, Any]:
+    """One document: its Asset, current Revision and full parse summary —
+    parser name and version, status, coverage, warnings, and any content that
+    was deliberately NOT extracted (embedded images, macros, hidden sheets)."""
+    from .runtime import get_runtime
+    from .domain.errors import AssetNotFound
+    documents = get_runtime().documents
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return documents.get_document(pid, asset_id)
+        except AssetNotFound as exc:
+            last = exc
+    raise last or AssetNotFound(asset_id)
+
+
+def get_document_outline(scope: str, revision_id: str,
+                         limit: int = 300) -> Dict[str, Any]:
+    """A bounded STRUCTURAL outline of one document revision.
+
+    Blocks with their type, heading path, evidence id and a short preview — not
+    the content. Use it to find the part you want, then call ``get_evidence``
+    with that block's evidence id for the exact stored text."""
+    from .runtime import get_runtime
+    from .domain.errors import RevisionNotFound
+    documents = get_runtime().documents
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return documents.get_outline(pid, revision_id, limit=limit)
+        except RevisionNotFound as exc:
+            last = exc
+    raise last or RevisionNotFound(revision_id)
+
+
+def search_documents(scope: str, query: str, limit: int = 20,
+                     parser: Optional[str] = None,
+                     block_type: Optional[str] = None) -> Dict[str, Any]:
+    """Search the workspace's documents (vector + exact-token, RRF-fused).
+
+    An exact Requirement ID, API path, error code or configuration key is
+    matched on token boundaries and PROMOTED above merely similar text — a query
+    for REQ-NC-017 never returns REQ-NC-0170 or a paragraph that just reads like
+    it. Every hit carries an ``evidence_id`` you can pass to ``get_evidence``."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().documents.search(
+        pid, query, limit=limit, parser=parser, block_type=block_type)
+
+
+def search_knowledge(scope: str, query: str, code_limit: int = 12,
+                     document_limit: int = 12) -> Dict[str, Any]:
+    """Search code and documents together, returned as SEPARATE sections.
+
+    A document hit appearing beside a code hit is NOT a claim that one
+    implements, refines or verifies the other — this is retrieval, not
+    relationship inference. The code-oriented ``search`` tool is unchanged and
+    remains the right tool for code alone."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().documents.search_knowledge(
+        pid, query, code_limit=code_limit, document_limit=document_limit)
+
+
+def find_document_related_candidates(scope: str, asset_id: str,
+                                     limit: int = 30) -> Dict[str, Any]:
+    """Deterministic CANDIDATE associations between a document and existing
+    knowledge.
+
+    Every result is an OBSERVED MENTION labelled ``status: "candidate"``, with a
+    confidence: high for an exact explicit identifier, medium for an exact match
+    after normalization, low for semantic similarity alone. Nothing is stored,
+    and no candidate asserts that the document implements, refines, verifies or
+    contradicts its target — that requires verification OpenMind does not yet
+    perform."""
+    from .runtime import get_runtime
+    from .domain.errors import AssetNotFound
+    documents = get_runtime().documents
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return documents.find_related_candidates(pid, asset_id, limit=limit)
+        except AssetNotFound as exc:
+            last = exc
+    raise last or AssetNotFound(asset_id)
+
+
+#: Additive read-only document tools. Registered ALONGSIDE the nine core tools
+#: and the four Phase 2 asset tools, never in place of one.
+DOCUMENT_TOOLS: List[Callable[..., Any]] = [
+    list_documents, get_document, get_document_outline, search_documents,
+    search_knowledge, find_document_related_candidates,
+]
+
+DOCUMENT_TOOL_NAMES = tuple(fn.__name__ for fn in DOCUMENT_TOOLS)
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
@@ -284,6 +410,8 @@ def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
     for fn in TOOLS:
         server.tool()(fn)
     for fn in ASSET_TOOLS:                 # additive read-only Asset tools (Phase 2)
+        server.tool()(fn)
+    for fn in DOCUMENT_TOOLS:              # additive read-only document tools (Phase 3)
         server.tool()(fn)
     return server
 

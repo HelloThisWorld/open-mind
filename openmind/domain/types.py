@@ -171,9 +171,13 @@ class AssetType:
     DOCUMENTATION_TEXT = "documentation-text"
     TEST_SOURCE = "test-source"
     BUILD_DEFINITION = "build-definition"
+    #: A rich/binary enterprise document (DOCX, PDF, XLSX, CSV). Added in v2
+    #: Phase 3; still purely extension-based, never a semantic judgement.
+    DOCUMENT = "document"
     UNKNOWN = "unknown"
     VALUES = frozenset({SOURCE_CODE, CONFIGURATION, DATABASE_SCHEMA,
-                        DOCUMENTATION_TEXT, TEST_SOURCE, BUILD_DEFINITION, UNKNOWN})
+                        DOCUMENTATION_TEXT, TEST_SOURCE, BUILD_DEFINITION,
+                        DOCUMENT, UNKNOWN})
 
     #: Exact (lower-cased) filenames that are build definitions regardless of
     #: extension (pom.xml is .xml but a build file; package.json is .json).
@@ -195,7 +199,14 @@ class AssetType:
         ".properties", ".yml", ".yaml", ".xml", ".json", ".toml", ".ini",
         ".conf", ".cfg", ".env", ".config",
     })
-    _DOC_EXTS = frozenset({".md", ".markdown", ".rst", ".adoc", ".txt"})
+    _DOC_EXTS = frozenset({".md", ".markdown", ".rst", ".adoc", ".asciidoc",
+                           ".txt"})
+    #: Rich/binary enterprise document formats (v2 Phase 3). Deliberately
+    #: disjoint from every set above, so no existing file's classification
+    #: changes: a ``.html``/``.yaml``/``.sql`` document keeps the code/config
+    #: type it has always had, and ``parser`` is the format discriminator for
+    #: document queries.
+    _DOCUMENT_EXTS = frozenset({".docx", ".pdf", ".xlsx", ".csv", ".tsv"})
 
     @classmethod
     def coerce(cls, value: Any) -> str:
@@ -232,6 +243,8 @@ class AssetType:
             return cls.CONFIGURATION
         if ext in cls._DOC_EXTS:
             return cls.DOCUMENTATION_TEXT
+        if ext in cls._DOCUMENT_EXTS:
+            return cls.DOCUMENT
         return cls.UNKNOWN
 
 
@@ -255,13 +268,55 @@ class RevisionStatus:
         return v if v in cls.VALUES else cls.UNKNOWN
 
 
+class DocumentBlockType:
+    """Structural block kinds a document parser may emit (v2 Phase 3).
+
+    A parser uses only the kinds its format actually has; nothing is invented to
+    fill the vocabulary out. ``DOCUMENT`` is the single root block every parsed
+    document carries.
+    """
+    DOCUMENT = "document"
+    SECTION = "section"
+    HEADING = "heading"
+    PARAGRAPH = "paragraph"
+    LIST_ITEM = "list-item"
+    CODE_BLOCK = "code-block"
+    TABLE = "table"
+    TABLE_ROW = "table-row"
+    SHEET = "sheet"
+    CELL_RANGE = "cell-range"
+    PAGE = "page"
+    API_OPERATION = "api-operation"
+    SCHEMA_DEFINITION = "schema-definition"
+    SQL_OBJECT = "sql-object"
+    VALUES = frozenset({DOCUMENT, SECTION, HEADING, PARAGRAPH, LIST_ITEM,
+                        CODE_BLOCK, TABLE, TABLE_ROW, SHEET, CELL_RANGE, PAGE,
+                        API_OPERATION, SCHEMA_DEFINITION, SQL_OBJECT})
+
+    #: Container blocks that are stored as Segments but normally NOT embedded:
+    #: they carry structure, and their content lives in their children. Indexing
+    #: them would dilute retrieval with empty scaffolding.
+    CONTAINERS = frozenset({DOCUMENT, SECTION, TABLE, SHEET, PAGE})
+
+    @classmethod
+    def coerce(cls, value: Any) -> str:
+        v = str(value or "").strip().lower()
+        return v if v in cls.VALUES else cls.PARAGRAPH
+
+
 class SegmentType:
-    """Structural unit kind inside one revision."""
+    """Structural unit kind inside one revision.
+
+    Code revisions use the four original kinds; document revisions reuse the
+    :class:`DocumentBlockType` vocabulary, so one ``segments`` table serves both
+    without a second column to disambiguate.
+    """
     TYPE = "type"
     METHOD = "method"
     CONSTRUCTOR = "constructor"
     FILE = "file"
-    VALUES = frozenset({TYPE, METHOD, CONSTRUCTOR, FILE})
+    CODE_VALUES = frozenset({TYPE, METHOD, CONSTRUCTOR, FILE})
+    VALUES = CODE_VALUES | DocumentBlockType.VALUES
 
     @classmethod
     def coerce(cls, value: Any) -> str:
@@ -279,6 +334,105 @@ class ContentMode:
     def coerce(cls, value: Any) -> str:
         v = str(value or "").strip().lower()
         return v if v in cls.VALUES else cls.VERBATIM
+
+
+class SourceKind:
+    """Where an Asset's bytes came from.
+
+    ``FILE`` — a file under a registered workspace source root; its live copy on
+    disk can be compared against the snapshot.
+    ``ATTACHMENT`` — a document appended from anywhere on the machine. Its
+    absolute origin path is deliberately NOT tracked, so the snapshot IS the
+    canonical source and current-source status is ``not-applicable`` rather than
+    a false ``missing``.
+    """
+    FILE = "file"
+    ATTACHMENT = "attachment"
+    VALUES = frozenset({FILE, ATTACHMENT})
+
+    @classmethod
+    def coerce(cls, value: Any) -> str:
+        v = str(value or "").strip().lower()
+        return v if v in cls.VALUES else cls.FILE
+
+
+class DocumentParseStatus:
+    """The honest outcome of one document parse.
+
+    Never a silent success: a truncated parse is ``PARTIAL``, an image-only PDF
+    is ``NEEDS_OCR`` (OCR is NOT performed in Phase 3), an unreadable encrypted
+    file is ``ENCRYPTED``, a format nothing claims is ``UNSUPPORTED``, and a
+    parser exception is ``FAILED``.
+    """
+    PARSED = "parsed"
+    PARTIAL = "partial"
+    NEEDS_OCR = "needs-ocr"
+    ENCRYPTED = "encrypted"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+    VALUES = frozenset({PARSED, PARTIAL, NEEDS_OCR, ENCRYPTED, UNSUPPORTED,
+                        FAILED})
+
+    #: Statuses that produced usable content worth committing as a Revision.
+    USABLE = frozenset({PARSED, PARTIAL})
+
+    @classmethod
+    def coerce(cls, value: Any) -> str:
+        v = str(value or "").strip().lower()
+        return v if v in cls.VALUES else cls.FAILED
+
+
+class ImportStatus:
+    """What an import request resolved to. Reported before anything is written
+    (``plan_import``) and again in the completed import report."""
+    NEW_ASSET = "new_asset"
+    REVISION = "revision"
+    DUPLICATE = "duplicate"
+    #: The default logical key already exists with DIFFERENT content and the
+    #: caller made no explicit choice. Nothing is written; the caller is told how
+    #: to retry (``--asset`` or ``--new-asset``).
+    POSSIBLE_REVISION = "possible_revision"
+    UNSUPPORTED = "unsupported"
+    VALUES = frozenset({NEW_ASSET, REVISION, DUPLICATE, POSSIBLE_REVISION,
+                        UNSUPPORTED})
+
+
+class CandidateType:
+    """How a document might relate to existing knowledge.
+
+    Every member is an OBSERVATION ("this text mentions that thing"), never a
+    semantic claim. ``implements`` / ``refines`` / ``verifies`` / ``contradicts``
+    are deliberately absent: they require the semantic verification deferred to
+    Phase 4, and inventing them here would turn retrieval into an unverified
+    assertion.
+    """
+    MENTIONS_SYMBOL = "mentions-symbol"
+    MENTIONS_FILE = "mentions-file"
+    MENTIONS_API = "mentions-api"
+    MENTIONS_CONFIGURATION = "mentions-configuration"
+    MENTIONS_DATABASE_OBJECT = "mentions-database-object"
+    MENTIONS_DOCUMENT = "mentions-document"
+    SIMILAR_CONTENT = "similar-content"
+    POSSIBLY_RELATED = "possibly-related"
+    VALUES = frozenset({MENTIONS_SYMBOL, MENTIONS_FILE, MENTIONS_API,
+                        MENTIONS_CONFIGURATION, MENTIONS_DATABASE_OBJECT,
+                        MENTIONS_DOCUMENT, SIMILAR_CONTENT, POSSIBLY_RELATED})
+
+
+class CandidateConfidence:
+    """HIGH = an exact explicit identifier matched. MEDIUM = an exact match after
+    deterministic normalization (an API path, a config key, a database object).
+    LOW = semantic retrieval only. Nothing above LOW is ever produced by
+    similarity alone."""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    VALUES = frozenset({HIGH, MEDIUM, LOW})
+
+
+#: Every candidate carries this, so no consumer can mistake retrieval output for
+#: a confirmed relation.
+CANDIDATE_STATUS = "candidate"
 
 
 @dataclass
@@ -401,6 +555,11 @@ class Segment:
     symbol: str = ""
     content_hash: str = ""
     content_mode: str = ContentMode.VERBATIM
+    #: v2 Phase 3. For a DOCUMENT segment, the SHA-256 of the exact represented
+    #: block text in the content store — so historical Evidence is recoverable
+    #: without rerunning a parser. Empty for code segments, which resolve through
+    #: the revision blob's line range instead.
+    content_blob_hash: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
@@ -410,6 +569,7 @@ class Segment:
             "ordinal": self.ordinal, "start_line": self.start_line,
             "end_line": self.end_line, "symbol": self.symbol,
             "content_hash": self.content_hash, "content_mode": self.content_mode,
+            "content_blob_hash": self.content_blob_hash,
             "metadata": dict(self.metadata),
         }
 
@@ -422,6 +582,7 @@ class Segment:
             end_line=row.get("end_line"), symbol=row.get("symbol", ""),
             content_hash=row.get("content_hash", ""),
             content_mode=row.get("content_mode", ContentMode.VERBATIM),
+            content_blob_hash=row.get("content_blob_hash", "") or "",
             metadata=dict(row.get("metadata") or {}))
 
 
@@ -455,6 +616,81 @@ class Evidence:
             created_at=row.get("created_at", ""))
 
 
+@dataclass
+class DocumentParse:
+    """The recorded parse projection over one immutable document Revision.
+
+    Derived, not canonical: the Revision's bytes are the truth, this is what one
+    named parser version made of them. A Revision has exactly one parse result in
+    Phase 3, and a historical parse is never silently replaced by a different
+    parser version.
+    """
+    revision_id: str
+    parser_name: str
+    parser_version: str
+    schema_version: str
+    status: str
+    structure_hash: str
+    title: str = ""
+    media_type: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[Dict[str, Any]] = field(default_factory=list)
+    unsupported_content: List[Dict[str, Any]] = field(default_factory=list)
+    coverage: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = ""
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "revision_id": self.revision_id, "parser_name": self.parser_name,
+            "parser_version": self.parser_version,
+            "schema_version": self.schema_version, "status": self.status,
+            "structure_hash": self.structure_hash, "title": self.title,
+            "media_type": self.media_type, "metadata": dict(self.metadata),
+            "warnings": list(self.warnings),
+            "unsupported_content": list(self.unsupported_content),
+            "coverage": dict(self.coverage), "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any]) -> "DocumentParse":
+        return cls(
+            revision_id=row["revision_id"], parser_name=row["parser_name"],
+            parser_version=row["parser_version"],
+            schema_version=row["schema_version"], status=row["status"],
+            structure_hash=row.get("structure_hash", ""),
+            title=row.get("title", ""), media_type=row.get("media_type", ""),
+            metadata=dict(row.get("metadata") or {}),
+            warnings=list(row.get("warnings") or []),
+            unsupported_content=list(row.get("unsupported_content") or []),
+            coverage=dict(row.get("coverage") or {}),
+            created_at=row.get("created_at", ""))
+
+
+#: Locator ``kind`` values a document Evidence may carry. ``source-range`` (the
+#: Phase 2 code locator) is deliberately not in here — it is resolved by the
+#: line-range path, not the block-blob path.
+DOCUMENT_LOCATOR_KINDS = frozenset({
+    "text-range", "html-element", "docx-paragraph", "docx-table-row",
+    "pdf-block", "spreadsheet-range", "json-pointer",
+})
+
+
+def locator_document_key(locator: Dict[str, Any]) -> str:
+    """The portable logical document key a locator points at, or ``''``.
+
+    Document locators name their target in ``document``; the Phase 2 code
+    locator uses ``file``. Both are workspace-relative — a locator NEVER carries
+    an absolute machine path — so one accessor serves both and callers do not
+    have to branch on the locator kind just to learn which object is cited.
+    """
+    return str((locator or {}).get("document")
+               or (locator or {}).get("file") or "")
+
+
+def is_document_locator(locator: Dict[str, Any]) -> bool:
+    return str((locator or {}).get("kind", "")) in DOCUMENT_LOCATOR_KINDS
+
+
 __all__ = [
     "JOB_STATUS_QUEUED", "JOB_STATUS_RUNNING", "JOB_STATUS_PAUSED",
     "JOB_STATUS_INTERRUPTED", "JOB_STATUS_DONE", "JOB_STATUS_FAILED",
@@ -463,4 +699,9 @@ __all__ = [
     "HealthCheck", "HealthReport", "JobWaitResult",
     "AssetState", "AssetType", "RevisionStatus", "SegmentType", "ContentMode",
     "SourceLocator", "Asset", "AssetRevision", "Segment", "Evidence",
+    # -- v2 Phase 3: document ingestion -------------------------------------
+    "SourceKind", "DocumentBlockType", "DocumentParseStatus", "ImportStatus",
+    "CandidateType", "CandidateConfidence", "CANDIDATE_STATUS",
+    "DocumentParse", "DOCUMENT_LOCATOR_KINDS", "locator_document_key",
+    "is_document_locator",
 ]

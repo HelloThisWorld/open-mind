@@ -14,6 +14,21 @@ httpx
 tree-sitter
 tree-sitter-java
 sqlglot           # dialect-aware SQL DDL parsing for the folded DB-schema model
+# Document parsing (v2 Phase 3). All four are permissively licensed and
+# compatible with this MIT project; none performs telemetry or any network call.
+# Every one is imported LAZILY, inside the parser that needs it, so a missing
+# package fails only its own format and the dependency-free `.openmind` artifact
+# export keeps working with none of them installed.
+python-docx>=1.1,<2      # MIT          - DOCX paragraphs, styles, tables
+pypdf>=4.2,<7            # BSD-3-Clause - PDF text extraction. Deliberately NOT
+                         #   PyMuPDF, which is AGPL-3.0 and would impose
+                         #   copyleft obligations on this MIT project and on
+                         #   anyone embedding it.
+openpyxl>=3.1,<4         # MIT          - XLSX cells, formulas-as-text, merges
+defusedxml>=0.7,<0.8     # PSF-2.0      - hardens the stdlib XML parsers that
+                         #   python-docx and openpyxl use, against external
+                         #   entities, external DTDs and expansion bombs. The
+                         #   OOXML parsers DECLINE to parse without it.
 # Vector + embeddings (all local; both have in-process fallbacks)
 chromadb
 fastembed          # pulls onnxruntime (CPU); embeddings run on CPU by default

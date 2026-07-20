@@ -1,0 +1,5 @@
+Case ID,Requirement,Scenario,Expected,Owner
+TC-001,REQ-NC-017,Review left idle for 31 minutes,Case returns to the queue,QA
+TC-002,REQ-NC-018,Screening call fails twice,Third attempt succeeds,QA
+TC-003,REQ-NC-019,Empty name submitted,Rejected with NC-100,QA
+TC-004,REQ-NC-017,Review completed in time,Decision is recorded,QA

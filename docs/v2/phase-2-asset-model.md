@@ -364,6 +364,15 @@ green; delete stays responsive and the startup janitor race fix is preserved.
 
 ## 13. Deferred Phase 3+ work
 
+> **Status update.** Phase 3 has since delivered the document-ingestion half of
+> this list — DOCX/PDF/XLSX/Markdown/HTML/CSV/OpenAPI/JSON-Schema/SQL parsing,
+> document Assets with block-level Evidence, document search and deterministic
+> candidate association. See
+> [phase-3-document-ingestion.md](phase-3-document-ingestion.md). Everything
+> else below is still deferred, including OCR and requirement traceability.
+> This section is left as written to record what Phase 2 itself did and did not
+> do.
+
 Intentionally **not** implemented here: PDF/DOCX/XLSX parsing, OCR pipelines,
 COBOL/JCL parsers, requirement/business-rule extraction, cloud LLM providers,
 induced Project Lens, Claim/Relation tables, Knowledge-Graph edges,

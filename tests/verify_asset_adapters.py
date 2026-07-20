@@ -56,9 +56,14 @@ tool_names = {t.name for t in asyncio.run(server.list_tools())}
 CORE = {"search", "route", "dispatch", "get_glossary", "find_similar_cases",
         "save_case", "get_doc", "propose_fix", "apply_fix"}
 ASSET = {"list_assets", "get_asset", "get_asset_revisions", "get_evidence"}
+# v2 Phase 3 adds six read-only document tools alongside these.
+DOCUMENT = {"list_documents", "get_document", "get_document_outline",
+            "search_documents", "search_knowledge",
+            "find_document_related_candidates"}
 check("all nine core MCP tools remain", CORE <= tool_names)
 check("the four read-only asset MCP tools are added", ASSET <= tool_names)
-check("only the asset tools were added", tool_names == CORE | ASSET)
+check("every registered tool is an accounted-for addition",
+      tool_names == CORE | ASSET | DOCUMENT)
 check("the MCP server keeps its name", server.name == "open-mind")
 
 # ---------------------------------------------------------------------------

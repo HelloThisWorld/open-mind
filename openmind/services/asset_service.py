@@ -30,7 +30,8 @@ from .. import config, content_store, db as db_module, machine, segmentation, wa
 from ..domain.errors import (AssetNotFound, ContentCorruption, EvidenceNotFound,
                              InvalidRequest, RevisionNotFound, SegmentNotFound)
 from ..domain.types import (Asset, AssetRevision, AssetState, AssetType,
-                            Evidence, Segment)
+                            Evidence, Segment, SourceKind, is_document_locator,
+                            locator_document_key)
 
 
 class AssetService:
@@ -188,7 +189,16 @@ class AssetService:
                      max_chars: int = 4000) -> Dict[str, Any]:
         """Evidence with its content recovered from the IMMUTABLE snapshot, plus
         an honest report of snapshot integrity and whether the live source still
-        matches. Never depends on a running model."""
+        matches. Never depends on a running model.
+
+        Two resolvers, chosen by what the Segment actually has:
+
+        * a DOCUMENT segment carries ``content_blob_hash`` — the exact block text
+          is read straight from that blob, with **no parser rerun**, so a newer
+          parser version can never rewrite historical evidence;
+        * a CODE segment has no block blob and resolves the Phase 2 way, by
+          slicing ``[startLine, endLine]`` out of the revision blob.
+        """
         self._require_workspace(workspace_id)
         ev = self._repo.get_evidence(workspace_id, evidence_id)
         if not ev:
@@ -197,32 +207,19 @@ class AssetService:
 
         rev = self._repo.get_revision(workspace_id, ev["revision_id"])
         locator = ev.get("locator") or {}
-        start = int(locator.get("startLine", 0) or 0)
-        end = int(locator.get("endLine", 0) or 0)
         expected_hash = ev.get("content_hash", "")
+        segment = (self._repo.get_segment(workspace_id, ev["segment_id"])
+                   if ev.get("segment_id") else None)
+        block_blob = (segment or {}).get("content_blob_hash", "")
 
-        snapshot_status = "missing"
-        content = ""
-        blob_hash = (rev or {}).get("content_blob_hash", "")
-        if rev and blob_hash:
-            try:
-                blob = self._content.get(workspace_id, blob_hash)
-                snap_text = blob.decode("utf-8", "replace")
-                recovered = segmentation.slice_lines(snap_text, start, end)
-                if segmentation.hash_text_utf8(recovered) == expected_hash:
-                    snapshot_status = "available"
-                    content = recovered
-                else:
-                    # blob intact but the cited range no longer hashes as recorded
-                    snapshot_status = "corrupt"
-            except ContentCorruption:
-                snapshot_status = "corrupt"
+        if block_blob:
+            snapshot_status, content = self._recover_block(
+                workspace_id, block_blob, expected_hash)
+        else:
+            snapshot_status, content = self._recover_source_range(
+                workspace_id, rev, locator, expected_hash)
 
-        current_status = self._current_source_status(
-            workspace_id, locator.get("file", ""), start, end, expected_hash)
-
-        truncated = len(content) > max_chars
-        return {
+        out: Dict[str, Any] = {
             "id": ev["id"],
             "revision_id": ev["revision_id"],
             "segment_id": ev.get("segment_id"),
@@ -230,14 +227,114 @@ class AssetService:
             "content_hash": expected_hash,
             "excerpt": ev.get("excerpt", ""),
             "content": content[:max_chars],
-            "truncated": truncated,
+            "truncated": len(content) > max_chars,
             "snapshot": {"status": snapshot_status},
-            "current_source": {"status": current_status},
+            "current_source": {
+                "status": self._current_source_for(workspace_id, rev, locator,
+                                                   expected_hash)},
             "revision": None if not rev else {
                 "id": rev["id"], "sequence": rev["sequence"],
                 "status": rev["status"], "content_hash": rev["content_hash"],
-                "content_blob_hash": blob_hash},
+                "content_blob_hash": rev.get("content_blob_hash", "")},
         }
+        parse = (self._repo.get_document_parse(workspace_id, ev["revision_id"])
+                 if rev else None)
+        if parse:
+            out["parser"] = {"name": parse["parser_name"],
+                             "version": parse["parser_version"],
+                             "status": parse["status"]}
+        return out
+
+    def _recover_block(self, workspace_id: str, block_blob: str,
+                       expected_hash: str) -> tuple:
+        """Document evidence: the exact block text from its own content blob."""
+        try:
+            text = self._content.get(workspace_id, block_blob).decode(
+                "utf-8", "replace")
+        except ContentCorruption:
+            return "corrupt", ""
+        if expected_hash and segmentation.hash_text_utf8(text) != expected_hash:
+            return "corrupt", ""
+        return "available", text
+
+    def _recover_source_range(self, workspace_id: str,
+                              rev: Optional[Dict[str, Any]],
+                              locator: Dict[str, Any],
+                              expected_hash: str) -> tuple:
+        """Code evidence: the cited line range out of the revision blob.
+        Unchanged Phase 2 behaviour."""
+        blob_hash = (rev or {}).get("content_blob_hash", "")
+        if not rev or not blob_hash:
+            return "missing", ""
+        start = int(locator.get("startLine", 0) or 0)
+        end = int(locator.get("endLine", 0) or 0)
+        try:
+            snap_text = self._content.get(workspace_id, blob_hash).decode(
+                "utf-8", "replace")
+        except ContentCorruption:
+            return "corrupt", ""
+        recovered = segmentation.slice_lines(snap_text, start, end)
+        if segmentation.hash_text_utf8(recovered) == expected_hash:
+            return "available", recovered
+        # blob intact but the cited range no longer hashes as recorded
+        return "corrupt", ""
+
+    def _current_source_for(self, workspace_id: str,
+                            rev: Optional[Dict[str, Any]],
+                            locator: Dict[str, Any],
+                            expected_hash: str) -> str:
+        """How the cited content compares with what is on disk NOW.
+
+        An ATTACHED document has no tracked origin path — the snapshot IS its
+        canonical source — so the answer is ``not-applicable``. Reporting
+        ``missing`` for it would be a false alarm about a file OpenMind
+        deliberately never recorded.
+
+        For a document under a source root, the comparison is whole-document:
+        re-resolving one block would mean rerunning a parser, and a different
+        parser version could legitimately produce different boundaries, so a
+        block-level ``changed`` would not be a trustworthy claim.
+        """
+        document_key = locator_document_key(locator)
+        if is_document_locator(locator):
+            asset = self._asset_of_revision(workspace_id, rev)
+            if (asset or {}).get("source_kind") == SourceKind.ATTACHMENT:
+                return "not-applicable"
+            return self._current_document_status(workspace_id, document_key,
+                                                 rev)
+        return self._current_source_status(
+            workspace_id, document_key,
+            int(locator.get("startLine", 0) or 0),
+            int(locator.get("endLine", 0) or 0), expected_hash)
+
+    def _asset_of_revision(self, workspace_id: str,
+                           rev: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not rev:
+            return None
+        return self._repo.get_asset(workspace_id, rev.get("asset_id", ""))
+
+    def _current_document_status(self, workspace_id: str, rel_file: str,
+                                 rev: Optional[Dict[str, Any]]) -> str:
+        """``matches`` / ``changed`` / ``missing`` for a workspace document
+        file, by comparing the whole current file's SHA-256 against the
+        revision's."""
+        if not rel_file or not rev:
+            return "missing"
+        abspath = machine.from_rel(workspace_id, rel_file)
+        root = machine.project_root(workspace_id)
+        if root:
+            root_n = os.path.normcase(os.path.normpath(root))
+            abs_n = os.path.normcase(os.path.normpath(abspath))
+            if abs_n != root_n and not abs_n.startswith(root_n + os.sep):
+                return "missing"
+        if not abspath or not os.path.isfile(abspath):
+            return "missing"
+        try:
+            with open(abspath, "rb") as fh:
+                current = content_store.hash_bytes(fh.read())
+        except OSError:
+            return "missing"
+        return "matches" if current == rev.get("content_hash") else "changed"
 
     def _current_source_status(self, workspace_id: str, rel_file: str,
                                start: int, end: int, expected_hash: str) -> str:

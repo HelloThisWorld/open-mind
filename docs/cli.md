@@ -226,6 +226,111 @@ segment/evidence id is a typed not-found (exit `1`), never a leak.
 `assets_removed`, `revisions`, `segments`, `evidence`) — additive; every prior
 `status` key is unchanged.
 
+### `document`
+
+Append and query **enterprise documents** (OpenMind v2 Phase 3). A document
+becomes an Asset like any other: immutable Revisions, structural Segments, and
+Evidence you can cite. See
+[docs/v2/phase-3-document-ingestion.md](v2/phase-3-document-ingestion.md).
+
+Supported formats: Markdown, plain text / RST / AsciiDoc, HTML, CSV/TSV, DOCX,
+text-based PDF, XLSX, OpenAPI (JSON/YAML), JSON Schema and SQL DDL.
+
+```bash
+# append a document from ANYWHERE on this machine
+python -m openmind.cli document add \
+  --workspace p_... --path ./Requirements_v3.docx --wait --json
+
+# list document assets (bounded; filter by parse status or parser)
+python -m openmind.cli document list --workspace p_... --json
+
+# one document: asset, current revision, parse summary and warnings
+python -m openmind.cli document show --workspace p_... --asset a_... --json
+
+# a bounded STRUCTURAL outline of a revision (structure, not content)
+python -m openmind.cli document outline \
+  --workspace p_... --revision r_... --limit 500 --json
+
+# document search (exact identifiers outrank merely similar text)
+python -m openmind.cli document search \
+  --workspace p_... --query "REQ-NC-017" --json
+
+# deterministic candidate associations for one document
+python -m openmind.cli document related --workspace p_... --asset a_... --json
+
+# code AND documents, reported separately
+python -m openmind.cli knowledge search \
+  --workspace p_... --query "NameCheck timeout" --json
+```
+
+**How to append a document.** `document add` reads a local file, snapshots its
+exact bytes into the immutable content store, and enqueues a `document_ingest`
+job. **The absolute path never enters the portable database** — the job payload
+carries a content hash and a filename. The file does not have to live under a
+registered source root; a document that does not is an *attachment*, and its
+snapshot is its canonical source.
+
+**Duplicate and revision decisions.** `document add` reports which of five
+things happened, and refuses to guess:
+
+| `status` | What it means | What was written |
+| --- | --- | --- |
+| `new_asset` | nothing matched | a new Asset + Revision |
+| `revision` | the target Asset exists and the bytes differ | the next Revision |
+| `duplicate` | these exact bytes are already a document Revision here | **nothing** |
+| `possible_revision` | the filename collides with a DIFFERENT document | **nothing** |
+| `unsupported` | no parser claims these bytes | an `unsupported` Asset |
+
+`possible_revision` exits **1** and hands back the commands that resolve it —
+two teams' `requirements.docx` are not the same document, and merging them
+because their names match is not recoverable:
+
+```
+--asset a_...                # these bytes are a new revision of that document
+--new-asset                  # this is a different document
+--logical-key documents/...  # name it yourself
+```
+
+`--asset`, `--logical-key` and `--new-asset` each name a *different* target for
+the same bytes and are mutually exclusive (exit `2`). `--new-asset` produces a
+readable deterministic key, e.g. `documents/Requirements_v3--9f2c1a3b.docx`.
+`--dry-run` reports the plan and stores nothing. `--version-label` sets an
+explicit label; otherwise a label is taken only from a *documented* metadata
+field (OpenAPI `info.version`, the DOCX core `revision`) — never guessed from
+prose or a filename.
+
+**How document Evidence is preserved.** Every stored block's exact text is
+snapshotted as its own content-addressed blob, so `asset evidence` recovers a
+historical citation **without re-running a parser** — a newer parser version
+can never rewrite history. For a workspace document the current-source status is
+`matches` / `changed` / `missing`; for an attachment it is `not-applicable`,
+because its origin path is deliberately not tracked and `missing` would be a
+false alarm.
+
+**Why `related` results are only candidates.** `document related` returns
+**observed mentions**, each labelled `status: "candidate"` with a confidence:
+`high` for an exact explicit identifier (a file path, a code symbol, a shared
+requirement id), `medium` for an exact match after normalization (an API path, a
+config key, a database object), `low` for embedding similarity alone. Nothing is
+persisted, and no result claims the document *implements*, *refines*, *verifies*
+or *contradicts* anything — that needs verification OpenMind does not yet
+perform. Likewise `knowledge search` returns code and documents in separate
+sections and never asserts a relationship between them.
+
+**Why OCR is not implemented.** An image-only PDF is *detected* and reported as
+`needs-ocr`, and produces no blocks. No text is invented for it, and no result
+ever claims OCR ran. Running OCR is Phase 4+.
+
+**Why Requirement extraction is Phase 4.** This phase ingests and normalizes the
+raw document layer. Extracting Requirements, Business Rules, Design Decisions or
+Acceptance Criteria — and asserting how they relate to code — requires semantic
+verification, and asserting it without that would put unverifiable claims into
+immutable history.
+
+**Why `.openmind` stays at schema 1.1.0.** The artifact bundle is a frozen
+integration contract that external consumers depend on. The document model is
+not exported through it, so nothing downstream changes.
+
 ### `export`
 
 ```bash
@@ -318,6 +423,27 @@ esac
 | `OPENMIND_ENRICH_EGRESS` | `0` disables Wikipedia glossary enrichment |
 | `OPENMIND_SOURCELINK_EGRESS` | `0` disables on-demand GitHub source fetching |
 | `OPENMIND_INGEST_FREE_GPU` | `0` keeps a resident model loaded during bulk embedding |
+
+Document parsing runs inside an explicit resource envelope. Every limit below is
+overridable, and hitting one produces a `partial` parse with a warning naming
+that exact limit — never a silent truncation.
+
+| Variable | Default | Bounds |
+| --- | --- | --- |
+| `OPENMIND_DOCUMENT_MAX_BYTES` | 25,000,000 | whole-document size (refused above it) |
+| `OPENMIND_DOCUMENT_MAX_BLOCKS` | 20,000 | blocks per document |
+| `OPENMIND_DOCUMENT_MAX_BLOCK_CHARS` | 20,000 | characters per block |
+| `OPENMIND_PDF_MAX_PAGES` | 2,000 | pages read from a PDF |
+| `OPENMIND_DOCX_MAX_PARAGRAPHS` | 50,000 | DOCX paragraphs |
+| `OPENMIND_DOCX_MAX_TABLES` | 2,000 | DOCX tables |
+| `OPENMIND_XLSX_MAX_SHEETS` | 100 | worksheets read |
+| `OPENMIND_XLSX_MAX_ROWS_PER_SHEET` | 20,000 | rows per sheet |
+| `OPENMIND_XLSX_MAX_CELLS` | 500,000 | cells per workbook |
+| `OPENMIND_CSV_MAX_ROWS` | 50,000 | CSV/TSV rows |
+| `OPENMIND_ZIP_MAX_MEMBERS` | 2,000 | members in a DOCX/XLSX package |
+| `OPENMIND_ZIP_MAX_TOTAL_BYTES` | 400,000,000 | total uncompressed size |
+| `OPENMIND_ZIP_MAX_MEMBER_BYTES` | 100,000,000 | one member's uncompressed size |
+| `OPENMIND_ZIP_MAX_RATIO` | 200 | compression ratio (bomb detection) |
 
 The acceptance runner sets the offline/no-egress set for every test.
 

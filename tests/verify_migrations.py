@@ -57,9 +57,10 @@ conn = _db()
 result = migrations.migrate(conn)
 tables = _tables(conn)
 
-check("empty db: runner reports the head version", result.version == 3)
+check("empty db: runner reports the head version", result.version == 4)
 check("empty db: every migration is applied in order",
-      result.applied == ["0001_baseline", "0002_paths_sidecar", "0003_asset_model"])
+      result.applied == ["0001_baseline", "0002_paths_sidecar", "0003_asset_model",
+                         "0004_document_ingestion"])
 check("empty db: nothing was reported as already applied", result.already_applied == [])
 check("empty db: not flagged as a legacy baseline", result.baselined_legacy is False)
 check("empty db: schema_migrations ledger exists", "schema_migrations" in tables)
@@ -74,6 +75,19 @@ for i in ("idx_assets_ws_state", "idx_assets_ws_type", "idx_revisions_asset_seq"
           "idx_revisions_blob", "idx_segments_revision", "idx_segments_symbol",
           "idx_segments_rev_type", "idx_evidence_revision", "idx_evidence_segment"):
     check(f"empty db: v0003 index '{i}' created", i in _idx)
+# v0004 document-ingestion tables, columns and indexes
+for t in ("document_parses", "document_index"):
+    check(f"empty db: v0004 table '{t}' created", t in tables)
+for i in ("idx_document_parses_status", "idx_document_parses_parser",
+          "idx_document_index_ws", "idx_document_index_revision",
+          "idx_segments_blob"):
+    check(f"empty db: v0004 index '{i}' created", i in _idx)
+check("empty db: v0004 added segments.content_blob_hash",
+      "content_blob_hash" in {r[1] for r in
+                              conn.execute("PRAGMA table_info(segments)")})
+check("empty db: v0004 added jobs.payload_json",
+      "payload_json" in {r[1] for r in
+                         conn.execute("PRAGMA table_info(jobs)")})
 check("empty db: ask_history index created",
       conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND "
                    "name='idx_ask_scope'").fetchone() is not None)
@@ -88,7 +102,7 @@ again = migrations.migrate(conn)
 check("repeat run: applies nothing", again.applied == [])
 check("repeat run: reports every migration as already applied",
       again.already_applied == ["0001_baseline", "0002_paths_sidecar",
-                                "0003_asset_model"])
+                                "0003_asset_model", "0004_document_ingestion"])
 check("repeat run: version is unchanged", again.version == result.version)
 
 # ---------------------------------------------------------------------------
@@ -138,13 +152,20 @@ check("legacy db: detected as legacy before migrating", runner.detect_legacy(leg
 legacy_result = migrations.migrate(legacy)
 
 check("legacy db: reported as a legacy baseline", legacy_result.baselined_legacy is True)
-check("legacy db: brought to head version", legacy_result.version == 3)
+check("legacy db: brought to head version", legacy_result.version == 4)
 check("legacy db: baseline recorded, not skipped",
       "0001_baseline" in legacy_result.applied)
 check("legacy db: v0003 applied on top of the baseline",
       "0003_asset_model" in legacy_result.applied)
 check("legacy db: v0003 asset tables created on the legacy database",
       {"assets", "asset_revisions", "segments", "evidence"} <= _tables(legacy))
+check("legacy db: v0004 applied on top of the baseline",
+      "0004_document_ingestion" in legacy_result.applied)
+check("legacy db: v0004 document tables created on the legacy database",
+      {"document_parses", "document_index"} <= _tables(legacy))
+check("legacy db: v0004 added payload_json to the legacy jobs table",
+      "payload_json" in {r[1] for r in
+                         legacy.execute("PRAGMA table_info(jobs)")})
 check("legacy db: project row survived",
       legacy.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 1)
 check("legacy db: project meta survived intact",

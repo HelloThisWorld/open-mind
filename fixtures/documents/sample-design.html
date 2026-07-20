@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NameCheck Design Note</title>
+  <style>body { font-family: sans-serif; }</style>
+  <script>var buildStamp = "this script text must never be indexed";</script>
+</head>
+<body>
+<main>
+  <h1>NameCheck Design Note</h1>
+  <p>This note describes the internal design of the NameCheck screening service.
+     All of it is invented for testing.</p>
+
+  <section>
+    <h2>Interfaces</h2>
+    <p>Screening is submitted with POST /name-check and the outcome is read with
+       GET /name-check/{caseId}.</p>
+    <ul>
+      <li>Requests are validated before the watch list is consulted.</li>
+      <li>An empty name is rejected with NC-100.</li>
+    </ul>
+    <pre><code>curl -X POST https://localhost/name-check -d '{"name":"example"}'</code></pre>
+  </section>
+
+  <section>
+    <h2>Error codes</h2>
+    <table>
+      <tr><th>Code</th><th>Meaning</th></tr>
+      <tr><td>NC-100</td><td>The submitted name was empty</td></tr>
+      <tr><td>NC-101</td><td>The watch list was unavailable</td></tr>
+    </table>
+  </section>
+
+  <p hidden>Draft note that the author marked as hidden.</p>
+  <p style="display:none">Superseded paragraph kept out of view.</p>
+</main>
+</body>
+</html>

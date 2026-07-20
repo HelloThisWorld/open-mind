@@ -76,6 +76,7 @@ runner switches the connection to explicit-transaction mode
 | 1 | `baseline` | the schema as it stood before migrations existed: `projects`, `jobs`, `model_config`, `file_index`, `kv`, `ask_history` + its index |
 | 2 | `paths_sidecar` | moves legacy in-DB project paths into the machine-local sidecar and blanks `projects.paths_json` |
 | 3 | `asset_model` | the canonical Asset model: `assets`, `asset_revisions`, `segments`, `evidence` + their indexes. Additive — creates only new tables (all `IF NOT EXISTS`), touches no existing row |
+| 4 | `document_ingestion` | document ingestion: `segments.content_blob_hash`, `jobs.payload_json`, `document_parses`, `document_index` + their indexes. Additive — two columns with defaults and two new tables |
 
 `v0003` adds the OpenMind v2 canonical content-identity model. `assets`
 references `projects(id)` and the whole subtree cascades on `ON DELETE CASCADE`,
@@ -86,21 +87,55 @@ representable. Content bytes live in an immutable content-addressed blob store
 (`data/<workspace>/objects/…`), never in the database — the DB stores only the
 SHA-256 hash. See [docs/v2/phase-2-asset-model.md](v2/phase-2-asset-model.md).
 
+`v0004` adds the document-ingestion plane. Two of its four changes deserve a
+word about *why*:
+
+* **`segments.content_blob_hash`** — code Evidence is recovered by slicing
+  `[startLine, endLine]` out of the revision blob, which is safe forever because
+  the byte-to-line mapping never changes. A *document* block cannot be recovered
+  that way: re-deriving it needs a parser rerun, and a future parser version may
+  legitimately produce different boundaries, which would silently rewrite
+  history. Document segments therefore snapshot their exact text as their own
+  content-addressed blob. Existing code segments keep `''` and are deliberately
+  **not** backfilled.
+* **`jobs.payload_json`** — a document import must reach the worker without an
+  absolute machine path in the portable database. The free `path` column already
+  means something different per job type, so the safe import payload (staged
+  blob hash, filename, requested target, import mode) gets its own column.
+
+`document_parses` is a derived parse projection over an immutable Revision, and
+its *presence* for an Asset's current Revision is the definition of "this Asset
+is a document" — a recorded fact, never an inference from the file extension.
+`document_index` names the vector chunks currently live for an Asset, so a new
+current Revision replaces exactly its predecessor's chunks. See
+[docs/v2/phase-3-document-ingestion.md](v2/phase-3-document-ingestion.md).
+
+Unusually, `v0004` declares `upgrade(conn)` rather than `STATEMENTS`: SQLite has
+no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, and a plain `ADD COLUMN` raises
+"duplicate column name" on a second run. Reading `PRAGMA table_info` first keeps
+the whole migration idempotent.
+
 ### Upgrading an existing database
 
 Nothing to do — open OpenMind and it migrates itself. Concretely:
 
 ```text
-empty database    -> v0001..v0003 create every table    -> ledger records 1, 2, 3
-legacy database   -> v0001 statements are all no-ops,    -> ledger records 1, 2, 3
-                     v0002/v0003 apply additively           (existing data untouched)
-current database  -> nothing to apply                    -> no writes
+empty database    -> v0001..v0004 create every table     -> ledger records 1..4
+legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..4
+                     v0002..v0004 apply additively           (existing data untouched)
+current database  -> nothing to apply                     -> no writes
 ```
 
 A Phase 1 database (already at v0002) upgrades to v0003 with no data loss:
 `v0003` only *creates* the new Asset tables. The Asset rows for existing files
 are then backfilled on the next ingestion — without re-embedding unchanged
 files, reusing their existing Chroma chunks.
+
+A Phase 2 database (at v0003) upgrades to v0004 with no data loss either:
+`v0004` adds two columns whose defaults are correct for every existing row, and
+two tables that start empty. No project, path, job, Asset, Revision, Segment,
+Evidence row, content blob, file-index row, vector collection, map, case, Ask
+exchange or template selection is touched.
 
 A legacy database is **baselined, not recreated**. `v0001` is written entirely
 with `CREATE TABLE IF NOT EXISTS`, so against a database that already has those

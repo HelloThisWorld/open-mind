@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from ..ports.runtime_ports import Clock
 from .asset_service import AssetService
+from .document_service import DocumentService
 from .export_service import ExportService
 from .health_service import HealthService
 from .ingest_service import IngestService
@@ -34,6 +35,7 @@ class ServiceContainer:
         self._jobs: Optional[JobService] = None
         self._ingest: Optional[IngestService] = None
         self._assets: Optional[AssetService] = None
+        self._documents: Optional[DocumentService] = None
         self._export: Optional[ExportService] = None
         self._health: Optional[HealthService] = None
 
@@ -64,6 +66,17 @@ class ServiceContainer:
         if self._assets is None:
             self._assets = AssetService(self.workspaces, self.ingest)
         return self._assets
+
+    @property
+    def documents(self) -> DocumentService:
+        # Document append + read-only document queries (v2 Phase 3). Like the
+        # asset service, constructing it never starts a worker — only a waited
+        # import does — so the read-only MCP document tools stay side-effect free.
+        if self._documents is None:
+            self._documents = DocumentService(
+                self.workspaces, self.jobs, self.assets,
+                ensure_worker=self._ensure_worker)
+        return self._documents
 
     @property
     def export(self) -> ExportService:

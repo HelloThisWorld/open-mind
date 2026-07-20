@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/screening-case.json",
+  "title": "ScreeningCase",
+  "description": "One NameCheck screening case. Invented for testing.",
+  "type": "object",
+  "required": ["caseId", "status"],
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "pattern": "^NC-[0-9]{6}$",
+      "description": "The case identifier."
+    },
+    "status": {
+      "$ref": "#/$defs/CaseStatus"
+    },
+    "submittedName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "reviewer": {
+      "$ref": "#/$defs/Reviewer"
+    },
+    "externalProfile": {
+      "$ref": "https://example.invalid/schemas/reviewer-profile.json"
+    }
+  },
+  "$defs": {
+    "CaseStatus": {
+      "type": "string",
+      "enum": ["pending", "cleared", "review", "rejected"],
+      "description": "The lifecycle status of a screening case."
+    },
+    "Reviewer": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "team": { "type": "string", "default": "operations" }
+      }
+    }
+  }
+}

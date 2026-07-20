@@ -103,6 +103,46 @@ class AssetSyncReq(BaseModel):
     timeout: float = 3600.0
 
 
+class DocumentImportReq(BaseModel):
+    """Append a document to a workspace (OpenMind v2 Phase 3).
+
+    ``path`` is a file on the SERVER's filesystem, not an upload. That is
+    deliberate: OpenMind is a local, loopback-only runtime, and reading a local
+    path avoids buffering a 25 MB multipart body just to hash it. The path is
+    used to read the bytes and is never stored — the job payload carries a
+    staged blob hash and a filename.
+
+    ``asset``, ``logical_key`` and ``new_asset`` each name a DIFFERENT target
+    for the same bytes and are mutually exclusive.
+    """
+    path: str
+    asset: Optional[str] = None
+    logical_key: Optional[str] = None
+    new_asset: bool = False
+    version_label: Optional[str] = None
+    wait: bool = False
+    timeout: float = 3600.0
+    dry_run: bool = False
+
+
+class DocumentSearchReq(BaseModel):
+    query: str
+    limit: int = 20
+    asset_type: Optional[str] = None
+    parser: Optional[str] = None
+    block_type: Optional[str] = None
+    logical_key: Optional[str] = None
+    include_removed: bool = False
+
+
+class KnowledgeSearchReq(BaseModel):
+    """Combined code + document retrieval. The two sides are returned
+    SEPARATELY and their adjacency is never a claimed relationship."""
+    query: str
+    code_limit: int = 12
+    document_limit: int = 12
+
+
 class RegenDocReq(BaseModel):
     scope: str
     page: Optional[str] = None

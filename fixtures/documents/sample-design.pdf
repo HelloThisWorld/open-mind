@@ -1,0 +1,63 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 200 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 72 760 Tm
+14 TL
+(NameCheck Design Note) Tj T*
+() Tj T*
+(The screening service exposes POST /name-check.) Tj T*
+(Requirement REQ-NC-017 governs the manual review timeout.) Tj T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 205 >>
+stream
+BT
+/F1 12 Tf
+1 0 0 1 72 760 Tm
+14 TL
+(Page 2: Error codes) Tj T*
+() Tj T*
+(NC-100 is returned when the submitted name is empty.) Tj T*
+(Configuration key namecheck.review.timeout.minutes applies.) Tj T*
+ET
+endstream
+endobj
+8 0 obj
+<< /Title (NameCheck Design Note) /Author (OpenMind Fixture Generator) /Producer (OpenMind fixtures) /CreationDate (D:20260102030405Z) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000191 00000 n 
+0000000317 00000 n 
+0000000568 00000 n 
+0000000694 00000 n 
+0000000950 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R >>
+startxref
+1103
+%%EOF

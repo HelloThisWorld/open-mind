@@ -208,6 +208,60 @@ def list_files(root: str, exclude: Optional[List[str]] = None) -> List[str]:
     return list(iter_files(root, exclude))
 
 
+def iter_document_files(root: str, exclude: Optional[List[str]] = None,
+                        respect_gitignore: bool = True,
+                        extensions: Optional[Set[str]] = None,
+                        max_bytes: Optional[int] = None) -> Iterator[str]:
+    """Yield DOCUMENT paths under *root* (OpenMind v2 Phase 3).
+
+    Same selection, gitignore and built-in-ignore rules as :func:`iter_files`,
+    but a different extension set and a different size limit — because the two
+    policies genuinely differ. Documents are bigger than source files, and a
+    `.pdf` or `.docx` must never reach :func:`read_text`, which would decode
+    binary as text and index the noise. Keeping the two walks apart is what
+    guarantees that: no document extension is ever added to
+    ``config.INDEX_EXTENSIONS``.
+
+    The default extension set (``config.DOCUMENT_DISCOVERY_EXTENSIONS``) already
+    excludes everything the code pipeline owns, so one file can never become two
+    Assets.
+    """
+    root = norm(root)
+    wanted = (config.DOCUMENT_DISCOVERY_EXTENSIONS if extensions is None
+              else extensions)
+    limit = config.DOCUMENT_MAX_BYTES if max_bytes is None else max_bytes
+    sel = Selection(exclude)
+    gi = GitIgnore(root) if respect_gitignore else None
+
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        kept = []
+        for d in dirnames:
+            full = norm(os.path.join(dirpath, d))
+            if d in config.DEFAULT_IGNORE_DIRS:
+                continue
+            if sel.is_excluded(full):
+                continue
+            if gi and gi.ignored(full, is_dir=True):
+                continue
+            kept.append(d)
+        dirnames[:] = kept
+
+        for f in filenames:
+            full = norm(os.path.join(dirpath, f))
+            if os.path.splitext(f)[1].lower() not in wanted:
+                continue
+            if sel.is_excluded(full):
+                continue
+            if gi and gi.ignored(full, is_dir=False):
+                continue
+            try:
+                if os.path.getsize(full) > limit:
+                    continue
+            except Exception:
+                continue
+            yield full
+
+
 def read_text(path: str) -> str:
     for enc in ("utf-8", "latin-1"):
         try:

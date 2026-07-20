@@ -383,6 +383,104 @@ def get_evidence(project_id: str, evidence_id: str,
     return _svc().assets.get_evidence(project_id, evidence_id, max_chars=max_chars)
 
 
+# ---------------------------------------------------------------------------
+# Documents (OpenMind v2 Phase 3) — ADDITIVE.
+#
+# Every route is workspace-scoped through DocumentService, so a cross-workspace
+# id resolves to a typed not-found and is mapped to 404 by the exception
+# handler. Responses are bounded; full document content is never returned (an
+# outline is structure, a search hit is a bounded excerpt, and the exact stored
+# text comes from the existing GET /projects/{id}/evidence/{evidence_id}).
+#
+# The literal `search` path is registered BEFORE `{asset_id}` so it can never be
+# captured as an asset id. `/ocr` stays a separate route: a PDF import is never
+# silently routed through OCR.
+# ---------------------------------------------------------------------------
+@app.get("/projects/{project_id}/documents")
+def list_documents(project_id: str, status: Optional[str] = None,
+                   parser: Optional[str] = None, state: str = "active",
+                   limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    return _svc().documents.list_documents(
+        project_id, status=status, parser=parser, state=state, limit=limit,
+        offset=offset)
+
+
+@app.post("/projects/{project_id}/documents/plan")
+def plan_document_import(project_id: str,
+                         req: models.DocumentImportReq) -> Dict[str, Any]:
+    """What importing this file WOULD do. Stores nothing at all."""
+    _reject_conflicting_targets(req)
+    return _svc().documents.plan_import(
+        project_id, req.path, asset_id=req.asset or "",
+        logical_key=req.logical_key or "", new_asset=bool(req.new_asset))
+
+
+@app.post("/projects/{project_id}/documents/search")
+def search_documents(project_id: str,
+                     req: models.DocumentSearchReq) -> Dict[str, Any]:
+    return _svc().documents.search(
+        project_id, req.query, limit=req.limit, asset_type=req.asset_type,
+        parser=req.parser, block_type=req.block_type,
+        logical_key=req.logical_key, include_removed=req.include_removed)
+
+
+@app.post("/projects/{project_id}/documents")
+def add_document(project_id: str,
+                 req: models.DocumentImportReq) -> Dict[str, Any]:
+    """Append a document. A duplicate or a filename collision writes nothing and
+    says so; only an unambiguous decision creates a job."""
+    _reject_conflicting_targets(req)
+    return _svc().documents.add_document(
+        project_id, req.path, asset_id=req.asset or "",
+        logical_key=req.logical_key or "", new_asset=bool(req.new_asset),
+        version_label=req.version_label or "", wait=req.wait,
+        timeout=req.timeout, dry_run=req.dry_run)
+
+
+@app.get("/projects/{project_id}/documents/{asset_id}")
+def get_document(project_id: str, asset_id: str) -> Dict[str, Any]:
+    return _svc().documents.get_document(project_id, asset_id)
+
+
+@app.get("/projects/{project_id}/documents/{asset_id}/outline")
+def get_document_outline(project_id: str, asset_id: str,
+                         limit: int = 500) -> Dict[str, Any]:
+    """The document's structural outline, for its CURRENT revision."""
+    document = _svc().documents.get_document(project_id, asset_id)
+    revision = (document.get("current_revision") or {}).get("id", "")
+    return _svc().documents.get_outline(project_id, revision, limit=limit)
+
+
+@app.get("/projects/{project_id}/documents/{asset_id}/related")
+def get_document_related(project_id: str, asset_id: str,
+                         limit: int = 30) -> Dict[str, Any]:
+    """Deterministic candidate associations. Every entry is an observed
+    mention labelled `status: "candidate"`, never a confirmed relation."""
+    return _svc().documents.find_related_candidates(project_id, asset_id,
+                                                    limit=limit)
+
+
+@app.post("/projects/{project_id}/knowledge/search")
+def search_knowledge(project_id: str,
+                     req: models.KnowledgeSearchReq) -> Dict[str, Any]:
+    return _svc().documents.search_knowledge(
+        project_id, req.query, code_limit=req.code_limit,
+        document_limit=req.document_limit)
+
+
+def _reject_conflicting_targets(req: models.DocumentImportReq) -> None:
+    """``asset`` / ``logical_key`` / ``new_asset`` name three different targets
+    for one set of bytes; combining them has no single correct meaning, so it is
+    a 400 rather than a silent precedence rule."""
+    chosen = [name for name, value in (("asset", req.asset),
+                                       ("logical_key", req.logical_key),
+                                       ("new_asset", req.new_asset)) if value]
+    if len(chosen) > 1:
+        raise HTTPException(
+            400, f"asset, logical_key and new_asset are mutually exclusive "
+                 f"(got: {', '.join(chosen)})")
+
+
 @app.get("/scope/{scope_id}")
 def describe_scope(scope_id: str) -> Dict[str, Any]:
     return scope.describe(scope_id)
