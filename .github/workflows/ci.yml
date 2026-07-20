@@ -330,14 +330,40 @@ jobs:
                   [sys.executable, "-m", "openmind.cli", *args]))
           data = cli("asset", "list", "--workspace", ws, "--json")
           assert data["ok"] and data["total"] >= 1, data
-          aid = data["assets"][0]["id"]
+          # This step proves the CODE asset chain, so pick a code asset
+          # explicitly. Since v2 Phase 3 the fixture's README.md and
+          # docs/GLOSSARY.md are also ingested (as DOCUMENT assets), and they
+          # sort first — taking assets[0] would silently retarget this check.
+          code = [a for a in data["assets"] if a["asset_type"] == "source-code"]
+          assert code, data
+          aid = code[0]["id"]
           show = cli("asset", "show", "--workspace", ws, "--asset", aid, "--json")
           rid = show["asset"]["current_revision"]["id"]
           segs = cli("asset", "segments", "--workspace", ws, "--revision", rid, "--json")
           eid = segs["segments"][0]["evidence_id"]
           ev = cli("asset", "evidence", "--workspace", ws, "--evidence", eid, "--json")
           assert ev["snapshot"]["status"] == "available", ev
+          assert ev["locator"]["kind"] == "source-range", ev
           assert not ev["locator"]["file"].startswith("/"), ev
+
+          # The portable-key rule holds for EVERY asset, whichever locator kind
+          # it uses: a code locator names its target in `file`, a document
+          # locator in `document`, and neither may ever be absolute.
+          for asset in data["assets"]:
+              rev = cli("asset", "show", "--workspace", ws,
+                        "--asset", asset["id"], "--json")["asset"]
+              current = rev.get("current_revision")
+              if not current:
+                  continue
+              seg = cli("asset", "segments", "--workspace", ws,
+                        "--revision", current["id"], "--limit", "1", "--json")
+              evidence_id = seg["segments"][0]["evidence_id"]
+              locator = cli("asset", "evidence", "--workspace", ws,
+                            "--evidence", evidence_id, "--json")["locator"]
+              key = locator.get("file") or locator.get("document") or ""
+              assert key, (asset["logical_key"], locator)
+              assert not key.startswith("/") and ":" not in key[:3], \
+                  (asset["logical_key"], locator)
           print("asset CLI smoke OK:", data["total"], "assets, evidence snapshot",
                 ev["snapshot"]["status"])
           PY

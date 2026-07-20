@@ -41,6 +41,18 @@ def make_zip(members):
     return buf.getvalue()
 
 
+def stored_names(data):
+    """The member names as the archive ACTUALLY holds them.
+
+    ``ZipInfo.__init__`` rewrites ``os.sep`` to ``/``, so a member written as
+    ``..\\..\\x`` is stored with forward slashes on Windows and verbatim with
+    backslashes on Linux. Asserting against the requested name would therefore
+    pass on one OS and fail on the other — which is exactly what happened.
+    """
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        return zf.namelist()
+
+
 def refuses(data, code, **overrides):
     limits = dict(LIMITS)
     limits.update(overrides)
@@ -59,17 +71,31 @@ for member, label in (("../../etc/passwd", "posix parent traversal"),
                       ("/etc/shadow", "absolute posix path"),
                       ("C:/Windows/x", "windows drive path"),
                       ("a/../../b", "traversal in the middle")):
-    ok, exc = refuses(make_zip([(member, b"x")]), "zip-path-traversal")
+    archive = make_zip([(member, b"x")])
+    ok, exc = refuses(archive, "zip-path-traversal")
     check(f"zip: {label} is refused", ok)
-    # zipfile normalizes backslashes to '/' on write, so the reported member is
-    # the STORED name. What matters is that the refusal names the real member.
-    check(f"zip: the {label} refusal names the member",
-          bool(exc) and str(exc.detail.get("member", ""))
-          == member.replace("\\", "/"))
+    check(f"zip: the {label} refusal names the member as stored",
+          bool(exc) and str(exc.detail.get("member", "")) == stored_names(archive)[0])
 
 ok, _ = refuses(make_zip([("word/document.xml", b"<x/>"), ("a/b/c.xml", b"x")]),
                 "zip-path-traversal")
 check("zip: an ordinary nested member is NOT refused", not ok)
+
+# The predicate itself, independent of what zipfile stored. On Linux a member
+# name keeps its backslashes (backslash is a legal POSIX filename character),
+# so the detector has to normalize them itself rather than relying on the
+# archive having done it.
+from openmind.documents.security import _is_traversal  # noqa: E402
+
+for raw, expected in ((r"..\..\windows\system32\x", True),
+                      ("../../etc/passwd", True),
+                      (r"C:\Windows\x", True),
+                      ("/etc/shadow", True),
+                      (r"a\b\c.xml", False),
+                      ("word/document.xml", False),
+                      ("a..b/c.xml", False)):
+    check(f"zip: traversal detection for {raw!r} is {expected}",
+          _is_traversal(raw) is expected)
 
 # ---------------------------------------------------------------------------
 # 2. Expansion caps
