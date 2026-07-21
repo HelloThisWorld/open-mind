@@ -468,6 +468,213 @@ def search_knowledge(project_id: str,
         document_limit=req.document_limit)
 
 
+# ---------------------------------------------------------------------------
+# Semantic plane (OpenMind v2 Phase 4) — ADDITIVE routes only.
+#
+# Everything below is workspace-scoped through the service layer, bounded,
+# and secret-free: provider profiles are machine-local files, the API key
+# VALUE never appears in a request or a response, and no route here can
+# trigger a remote model call unless the workspace policy explicitly allows
+# remote use. The existing `/projects` naming is kept on purpose.
+# ---------------------------------------------------------------------------
+@app.get("/providers")
+def list_providers() -> Dict[str, Any]:
+    """Machine-local provider profiles with their static validation. Read
+    only — profiles are configured via the CLI on the machine they live on."""
+    from .semantic.providers import profiles as _profiles
+    records = _profiles.list_profiles()
+    return {"providers": records, "count": len(records)}
+
+
+@app.get("/providers/{name}")
+def get_provider_profile(name: str) -> Dict[str, Any]:
+    from .semantic.providers import profiles as _profiles
+    profile = _profiles.require_profile(name)
+    record = profile.as_dict()
+    record["validation"] = _profiles.validate_profile(profile).as_dict()
+    record["expected_host"] = _profiles.expected_host(profile)
+    return {"provider": record}
+
+
+@app.get("/projects/{project_id}/semantic/policy")
+def get_semantic_policy(project_id: str) -> Dict[str, Any]:
+    return {"policy": _svc().semantic.get_policy(project_id)}
+
+
+@app.post("/projects/{project_id}/semantic/policy")
+def set_semantic_policy(project_id: str,
+                        req: models.SemanticPolicyReq) -> Dict[str, Any]:
+    return {"policy": _svc().semantic.set_policy(
+        project_id, data_classification=req.data_classification,
+        allow_remote=req.allow_remote,
+        provider_profile=req.provider_profile,
+        local_cache_enabled=req.local_cache_enabled,
+        task_models=req.task_models, budgets=req.budgets)}
+
+
+@app.post("/projects/{project_id}/semantic/plan")
+def semantic_plan(project_id: str,
+                  req: models.SemanticAnalysisReq) -> Dict[str, Any]:
+    """Deterministic dry-run: no provider call, nothing written."""
+    return {"plan": _svc().semantic.plan_analysis(
+        project_id, task_types=req.tasks or None, scope=req.scope,
+        provider_profile=req.provider, model_tier=req.model_tier,
+        budgets=req.budgets, force=req.force)}
+
+
+@app.post("/projects/{project_id}/semantic/analyses")
+def semantic_start(project_id: str,
+                   req: models.SemanticAnalysisReq) -> Dict[str, Any]:
+    return _svc().semantic.start_analysis(
+        project_id, task_types=req.tasks or None, scope=req.scope,
+        provider_profile=req.provider, model_tier=req.model_tier,
+        budgets=req.budgets, force=req.force, wait=req.wait,
+        timeout=req.timeout)
+
+
+@app.post("/projects/{project_id}/semantic/analyses/{run_id}/resume")
+def semantic_resume(project_id: str, run_id: str,
+                    req: models.SemanticResumeReq) -> Dict[str, Any]:
+    return _svc().semantic.resume_analysis(project_id, run_id,
+                                           wait=req.wait,
+                                           timeout=req.timeout)
+
+
+@app.get("/projects/{project_id}/semantic/analyses")
+def semantic_runs(project_id: str, limit: int = 50, offset: int = 0,
+                  status: Optional[str] = None) -> Dict[str, Any]:
+    return _svc().semantic.list_runs(project_id, limit=limit, offset=offset,
+                                     status=status)
+
+
+@app.get("/projects/{project_id}/semantic/analyses/{run_id}")
+def semantic_run(project_id: str, run_id: str) -> Dict[str, Any]:
+    return {"run": _svc().semantic.get_run(project_id, run_id)}
+
+
+@app.get("/projects/{project_id}/semantic/analyses/{run_id}/usage")
+def semantic_usage(project_id: str, run_id: str) -> Dict[str, Any]:
+    return _svc().semantic.get_usage(project_id, run_id)
+
+
+@app.get("/projects/{project_id}/semantic/candidates")
+def semantic_candidates(project_id: str, kind: Optional[str] = None,
+                        type: Optional[str] = None,
+                        review_status: Optional[str] = None,
+                        lifecycle_status: Optional[str] = None,
+                        run: Optional[str] = None, limit: int = 100,
+                        offset: int = 0) -> Dict[str, Any]:
+    return _svc().semantic.list_candidates(
+        project_id, candidate_kind=kind, candidate_type=type,
+        review_status=review_status, lifecycle_status=lifecycle_status,
+        run_id=run, limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/semantic/candidates/{candidate_id}")
+def semantic_candidate(project_id: str, candidate_id: str) -> Dict[str, Any]:
+    return {"candidate": _svc().semantic.get_candidate(project_id,
+                                                       candidate_id)}
+
+
+@app.post("/projects/{project_id}/semantic/candidates/{candidate_id}/review")
+def semantic_review(project_id: str, candidate_id: str,
+                    req: models.SemanticReviewReq) -> Dict[str, Any]:
+    """Review changes candidate METADATA only; confirming never creates a
+    canonical entity or relation."""
+    semantic = _svc().semantic
+    review = {"candidate": semantic.review_candidate,
+              "relation": semantic.review_relation_candidate,
+              "conflict": semantic.review_conflict_candidate}.get(req.kind)
+    if review is None:
+        raise HTTPException(400, f"unknown candidate kind: {req.kind!r}")
+    return {"candidate": review(project_id, candidate_id,
+                                decision=req.decision, note=req.note,
+                                reviewer=req.reviewer)}
+
+
+@app.get("/projects/{project_id}/semantic/relations")
+def semantic_relations(project_id: str, type: Optional[str] = None,
+                       review_status: Optional[str] = None,
+                       lifecycle_status: Optional[str] = None,
+                       limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    return _svc().semantic.list_relation_candidates(
+        project_id, relation_type=type, review_status=review_status,
+        lifecycle_status=lifecycle_status, limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/semantic/conflicts")
+def semantic_conflicts(project_id: str, category: Optional[str] = None,
+                       review_status: Optional[str] = None,
+                       lifecycle_status: Optional[str] = None,
+                       limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    return _svc().semantic.list_conflict_candidates(
+        project_id, category=category, review_status=review_status,
+        lifecycle_status=lifecycle_status, limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/lenses")
+def list_lenses(project_id: str,
+                source: Optional[str] = None) -> Dict[str, Any]:
+    return _svc().lenses.list_lenses(project_id, source=source)
+
+
+@app.get("/projects/{project_id}/lenses/{lens_id}")
+def get_lens(project_id: str, lens_id: str) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.get_lens(project_id, lens_id)}
+
+
+@app.post("/projects/{project_id}/lenses/induction-plan")
+def lens_induction_plan(project_id: str,
+                        req: models.LensInductionReq) -> Dict[str, Any]:
+    """Deterministic sample plan + policy verdict. No provider call."""
+    return {"plan": _svc().lenses.plan_induction(
+        project_id, provider_profile=req.provider)}
+
+
+@app.post("/projects/{project_id}/lenses")
+def lens_induce(project_id: str,
+                req: models.LensInductionReq) -> Dict[str, Any]:
+    """Start a lens induction (one bounded strong-tier request; the result
+    is stored PROVISIONAL and needs explicit approval + activation)."""
+    return _svc().lenses.start_induction(
+        project_id, provider_profile=req.provider, wait=req.wait,
+        timeout=req.timeout)
+
+
+@app.post("/projects/{project_id}/lenses/import")
+def lens_import(project_id: str,
+                req: models.LensImportReq) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.import_organization_lens(project_id,
+                                                           req.name)}
+
+
+@app.post("/projects/{project_id}/lenses/{lens_id}/validate")
+def lens_validate(project_id: str, lens_id: str) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.validate(project_id, lens_id)}
+
+
+@app.post("/projects/{project_id}/lenses/{lens_id}/approve")
+def lens_approve(project_id: str, lens_id: str) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.approve(project_id, lens_id)}
+
+
+@app.post("/projects/{project_id}/lenses/{lens_id}/reject")
+def lens_reject(project_id: str, lens_id: str,
+                req: models.LensRejectReq) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.reject(project_id, lens_id,
+                                         reason=req.reason)}
+
+
+@app.post("/projects/{project_id}/lenses/{lens_id}/activate")
+def lens_activate(project_id: str, lens_id: str) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.activate(project_id, lens_id)}
+
+
+@app.post("/projects/{project_id}/lenses/{lens_id}/deactivate")
+def lens_deactivate(project_id: str, lens_id: str) -> Dict[str, Any]:
+    return {"lens": _svc().lenses.deactivate(project_id, lens_id)}
+
+
 def _reject_conflicting_targets(req: models.DocumentImportReq) -> None:
     """``asset`` / ``logical_key`` / ``new_asset`` name three different targets
     for one set of bytes; combining them has no single correct meaning, so it is

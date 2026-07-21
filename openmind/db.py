@@ -560,6 +560,15 @@ def _ask_trim(scope_id: str, keep: int = ASK_HISTORY_CAP) -> None:
     _c().commit()
 
 
+def shared_connection():
+    """The process-wide connection and its guarding lock, for sibling
+    repository modules (the Phase 4 semantic store). Callers MUST hold the
+    returned lock for every use of the connection — it is the same RLock that
+    serializes every other access in this module. Bootstraps the database on
+    first use exactly like the other accessors here."""
+    return _c(), _lock
+
+
 # ---------------------------------------------------------------------------
 # kv
 # ---------------------------------------------------------------------------

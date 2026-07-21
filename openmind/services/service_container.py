@@ -38,6 +38,8 @@ class ServiceContainer:
         self._documents: Optional[DocumentService] = None
         self._export: Optional[ExportService] = None
         self._health: Optional[HealthService] = None
+        self._semantic = None
+        self._lenses = None
 
     @property
     def workspaces(self) -> WorkspaceService:
@@ -77,6 +79,27 @@ class ServiceContainer:
                 self.workspaces, self.jobs, self.assets,
                 ensure_worker=self._ensure_worker)
         return self._documents
+
+    @property
+    def semantic(self):
+        # Semantic analysis (v2 Phase 4). Imported lazily so surfaces that
+        # never touch the semantic plane (export, doctor) do not pay for it,
+        # and so a provider SDK is never imported by container construction.
+        if self._semantic is None:
+            from ..semantic.service import SemanticAnalysisService
+            self._semantic = SemanticAnalysisService(
+                self.workspaces, self.jobs,
+                ensure_worker=self._ensure_worker)
+        return self._semantic
+
+    @property
+    def lenses(self):
+        # Adaptive Project Lenses (v2 Phase 4). Same lazy construction.
+        if self._lenses is None:
+            from ..semantic.lenses.service import LensService
+            self._lenses = LensService(self.workspaces, self.jobs,
+                                       ensure_worker=self._ensure_worker)
+        return self._lenses
 
     @property
     def export(self) -> ExportService:

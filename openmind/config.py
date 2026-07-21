@@ -37,6 +37,12 @@ STATIC_DIR = APP_DIR / "static"
 DB_PATH = DATA_DIR / "openmind.db"
 CHROMA_DIR = DATA_DIR / "chroma"
 OUTBOUND_LOG = DATA_DIR / "outbound.log"
+# Structured JSON-lines audit of SEMANTIC egress (v2 Phase 4): one record per
+# allowed/blocked provider call with workspace, profile, task, host, byte
+# counts, request hash and classification — never a request/response body,
+# never an authorization header. Complements OUTBOUND_LOG (which also gets a
+# one-line mirror so /netlog shows semantic traffic beside everything else).
+SEMANTIC_AUDIT_LOG = DATA_DIR / "semantic_audit.log"
 
 
 def project_dir(project_id: str) -> Path:

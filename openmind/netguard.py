@@ -195,3 +195,157 @@ def get_log(limit: int = 200) -> List[Dict[str, Any]]:
     with _LOCK:
         items = list(_LOG)
     return items[-limit:]
+
+
+# ---------------------------------------------------------------------------
+# Semantic egress (OpenMind v2 Phase 4) — a DEDICATED, separately audited path.
+#
+# The existing guarded_request stays loopback-only, untouched. A semantic
+# provider call is different in kind: it may reach exactly ONE remote host —
+# the host its provider profile names — over HTTPS, only after the workspace
+# policy gate has said yes, and every request (allowed or blocked) is written
+# to a structured JSON-lines audit (config.SEMANTIC_AUDIT_LOG) carrying the
+# workspace, profile, task, byte counts, request hash and classification.
+# Request/response BODIES and authorization headers are never logged anywhere.
+#
+# There is deliberately no allow_any_external flag and no wildcard: the
+# allowed host is an exact string comparison against the profile's endpoint
+# host, so a redirect, a document-supplied URL, or an SDK surprise cannot
+# reach anywhere else. Cloud SDKs get their HTTP client from
+# openmind.semantic.transport, whose transport validates EVERY hop through
+# assert_semantic_host below.
+# ---------------------------------------------------------------------------
+class SemanticEgressBlocked(ExfiltrationBlocked):
+    """A semantic provider call tried to reach a host outside its profile."""
+
+
+def _semantic_audit(entry: Dict[str, Any]) -> None:
+    """Append one structured record to the semantic audit log, and mirror a
+    one-line summary into the general outbound ring so /netlog shows semantic
+    traffic beside everything else. Never raises."""
+    import json as _json
+    try:
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with open(config.SEMANTIC_AUDIT_LOG, "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    note = (f"semantic egress ({entry.get('provider_kind', '')}"
+            f"/{entry.get('task', '')})"
+            if entry.get("allowed") else
+            f"REFUSED semantic egress: {entry.get('reason', '')}")
+    _record(str(entry.get("method", "")), str(entry.get("url", "")),
+            entry.get("host"), entry.get("port"),
+            bool(entry.get("allowed")), note=note)
+
+
+def semantic_audit_record(*, method: str, url: str, allowed: bool,
+                          reason: str, workspace_id: str = "",
+                          profile: str = "", provider_kind: str = "",
+                          task: str = "", classification: str = "",
+                          request_hash: str = "",
+                          request_bytes: Optional[int] = None,
+                          response_bytes: Optional[int] = None) -> Dict[str, Any]:
+    """Write one semantic audit record (the Phase 4 audit contract). Byte
+    counts are COUNTS, never content; None means "not known yet" (a blocked
+    request has no response size)."""
+    parsed = urlparse(url)
+    entry = {
+        "ts": _stamp(),
+        "workspace_id": workspace_id,
+        "profile": profile,
+        "provider_kind": provider_kind,
+        "task": task,
+        "host": parsed.hostname,
+        "port": parsed.port,
+        "method": method.upper(),
+        "url": f"{parsed.scheme}://{parsed.hostname or ''}{parsed.path or ''}",
+        "allowed": allowed,
+        "request_bytes": request_bytes,
+        "response_bytes": response_bytes,
+        "request_hash": request_hash,
+        "classification": classification,
+        "reason": reason,
+    }
+    _semantic_audit(entry)
+    return entry
+
+
+def assert_semantic_host(url: str, *, allowed_host: str, remote: bool,
+                         method: str = "POST", workspace_id: str = "",
+                         profile: str = "", provider_kind: str = "",
+                         task: str = "", classification: str = "",
+                         request_hash: str = "",
+                         request_bytes: Optional[int] = None) -> None:
+    """Validate ONE semantic request hop. Raises SemanticEgressBlocked (and
+    writes a blocked audit record) unless the URL's host is exactly the
+    profile's allowed host, with HTTPS for remote and loopback for local.
+
+    Called for every hop the audited transport sees, so a redirect can never
+    escape the provider host even if a caller enabled redirect following.
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    expected = (allowed_host or "").lower()
+    reason = ""
+    if not expected:
+        reason = "profile has no allowed host configured"
+    elif host != expected:
+        reason = f"host {host!r} is not the profile host {expected!r}"
+    elif remote and parsed.scheme != "https":
+        reason = f"remote provider requires https, got {parsed.scheme!r}"
+    elif not remote and not is_local_host(host):
+        reason = f"local provider must be loopback, got {host!r}"
+    if reason:
+        semantic_audit_record(
+            method=method, url=url, allowed=False, reason=reason,
+            workspace_id=workspace_id, profile=profile,
+            provider_kind=provider_kind, task=task,
+            classification=classification, request_hash=request_hash,
+            request_bytes=request_bytes)
+        raise SemanticEgressBlocked(
+            f"Refusing semantic egress to {host!r}: {reason}. A provider call "
+            f"may reach only its profile's configured host.")
+
+
+def guarded_semantic_request(method: str, url: str, *, allowed_host: str,
+                             remote: bool, timeout: float = 120.0,
+                             workspace_id: str = "", profile: str = "",
+                             provider_kind: str = "", task: str = "",
+                             classification: str = "",
+                             request_hash: str = "",
+                             transport: Optional[Any] = None,
+                             **kwargs) -> httpx.Response:
+    """One audited semantic HTTP request (used by the SDK-less local provider
+    and by explicit `provider test` pings). Validates the host, performs the
+    call with redirects DISABLED, and writes the completed audit record with
+    request/response byte counts. Bodies and auth headers are never logged.
+
+    *transport* is a test seam: a stub ``httpx.BaseTransport`` lets suites
+    exercise this exact audited path with zero network access. Host
+    validation and audit logging run identically either way."""
+    body = kwargs.get("content")
+    if body is None and "json" in kwargs:
+        import json as _json
+        body = _json.dumps(kwargs["json"]).encode("utf-8")
+    request_bytes = len(body) if isinstance(body, (bytes, bytearray)) else None
+    assert_semantic_host(url, allowed_host=allowed_host, remote=remote,
+                         method=method, workspace_id=workspace_id,
+                         profile=profile, provider_kind=provider_kind,
+                         task=task, classification=classification,
+                         request_hash=request_hash,
+                         request_bytes=request_bytes)
+    client_kwargs: Dict[str, Any] = {"timeout": timeout,
+                                     "follow_redirects": False}
+    if transport is not None:
+        client_kwargs["transport"] = transport
+    with httpx.Client(**client_kwargs) as client:
+        resp = client.request(method, url, **kwargs)
+    semantic_audit_record(
+        method=method, url=url, allowed=True, reason="ok",
+        workspace_id=workspace_id, profile=profile,
+        provider_kind=provider_kind, task=task,
+        classification=classification, request_hash=request_hash,
+        request_bytes=request_bytes,
+        response_bytes=len(resp.content) if resp.content is not None else None)
+    return resp

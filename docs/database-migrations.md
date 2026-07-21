@@ -77,6 +77,7 @@ runner switches the connection to explicit-transaction mode
 | 2 | `paths_sidecar` | moves legacy in-DB project paths into the machine-local sidecar and blanks `projects.paths_json` |
 | 3 | `asset_model` | the canonical Asset model: `assets`, `asset_revisions`, `segments`, `evidence` + their indexes. Additive — creates only new tables (all `IF NOT EXISTS`), touches no existing row |
 | 4 | `document_ingestion` | document ingestion: `segments.content_blob_hash`, `jobs.payload_json`, `document_parses`, `document_index` + their indexes. Additive — two columns with defaults and two new tables |
+| 5 | `semantic_plane` | the Phase 4 semantic plane: `workspace_semantic_policies`, `semantic_analysis_runs`, `semantic_analysis_targets`, `semantic_candidates` (+ evidence join), `semantic_relation_candidates` (+ evidence join), `semantic_conflict_candidates` (+ evidence join), `semantic_usage`, `semantic_cache`, `project_lenses` + their indexes. Additive — twelve new tables, no existing row touched |
 
 `v0003` adds the OpenMind v2 canonical content-identity model. `assets`
 references `projects(id)` and the whole subtree cascades on `ON DELETE CASCADE`,
@@ -115,14 +116,25 @@ no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, and a plain `ADD COLUMN` raises
 "duplicate column name" on a second run. Reading `PRAGMA table_info` first keeps
 the whole migration idempotent.
 
+`v0005` adds the Phase 4 semantic plane: workspace policy (fail-closed
+defaults — `restricted` classification, remote off), analysis runs and their
+resumable per-target checkpoints, locally VERIFIED semantic candidates with
+their evidence-quote joins, relation and conflict candidates, the per-request
+usage ledger (token columns are nullable — an unreported number stays `NULL`,
+never a false zero), the local semantic-result cache, and Project Lens
+records. Everything is a new table; provider profiles and API keys are
+deliberately NOT here — profiles live in the machine-local sidecar
+(`~/.openmind/providers.json`) and key VALUES live only in environment
+variables. See [docs/v2/phase-4-semantic-plane.md](v2/phase-4-semantic-plane.md).
+
 ### Upgrading an existing database
 
 Nothing to do — open OpenMind and it migrates itself. Concretely:
 
 ```text
-empty database    -> v0001..v0004 create every table     -> ledger records 1..4
-legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..4
-                     v0002..v0004 apply additively           (existing data untouched)
+empty database    -> v0001..v0005 create every table     -> ledger records 1..5
+legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..5
+                     v0002..v0005 apply additively           (existing data untouched)
 current database  -> nothing to apply                     -> no writes
 ```
 
@@ -136,6 +148,11 @@ A Phase 2 database (at v0003) upgrades to v0004 with no data loss either:
 two tables that start empty. No project, path, job, Asset, Revision, Segment,
 Evidence row, content blob, file-index row, vector collection, map, case, Ask
 exchange or template selection is touched.
+
+A Phase 1–3 database upgrades to v0005 the same way: every `v0005` change is a
+new empty table, so all of the above PLUS document parse records, document
+indexes and glossary/structure maps survive byte-for-byte. Semantic policy
+rows appear only when a workspace explicitly sets a policy.
 
 A legacy database is **baselined, not recreated**. `v0001` is written entirely
 with `CREATE TABLE IF NOT EXISTS`, so against a database that already has those

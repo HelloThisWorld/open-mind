@@ -172,3 +172,61 @@ class EnrichAutoReq(BaseModel):
     pins: Dict[str, str] = Field(default_factory=dict)  # term -> exact article title
     block: List[str] = Field(default_factory=list)      # terms to never auto-enrich
     enabled: Optional[bool] = None                      # enable/disable auto-enrich
+
+
+# ---------------------------------------------------------------------------
+# Semantic plane (OpenMind v2 Phase 4). Additive request bodies only; every
+# response stays a plain dict from the service layer. No request here ever
+# carries an API key — provider credentials are environment variables that
+# machine-local profiles reference by NAME.
+# ---------------------------------------------------------------------------
+class SemanticPolicyReq(BaseModel):
+    """Update a workspace's semantic policy. Unset fields keep their stored
+    (or fail-closed default) values."""
+    data_classification: Optional[str] = None
+    allow_remote: Optional[bool] = None
+    provider_profile: Optional[str] = None
+    local_cache_enabled: Optional[bool] = None
+    task_models: Optional[Dict[str, str]] = None
+    budgets: Optional[Dict[str, Any]] = None
+
+
+class SemanticAnalysisReq(BaseModel):
+    """Plan or start a semantic analysis run."""
+    tasks: List[str] = Field(default_factory=list)
+    scope: Optional[Dict[str, Any]] = None
+    provider: str = ""
+    model_tier: str = ""
+    budgets: Optional[Dict[str, Any]] = None
+    force: bool = False
+    wait: bool = False
+    timeout: float = 3600.0
+
+
+class SemanticResumeReq(BaseModel):
+    wait: bool = False
+    timeout: float = 3600.0
+
+
+class SemanticReviewReq(BaseModel):
+    """Review one candidate. ``kind`` selects the candidate family."""
+    decision: str
+    kind: str = "candidate"              # candidate | relation | conflict
+    note: str = ""
+    reviewer: str = ""
+
+
+class LensInductionReq(BaseModel):
+    provider: str = ""
+    wait: bool = False
+    timeout: float = 3600.0
+
+
+class LensRejectReq(BaseModel):
+    reason: str = ""
+
+
+class LensImportReq(BaseModel):
+    """Import an organization lens file (by name or filename) into the
+    workspace."""
+    name: str

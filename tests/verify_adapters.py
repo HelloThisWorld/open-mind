@@ -281,9 +281,16 @@ DOCUMENT_TOOLS = ("list_documents", "get_document", "get_document_outline",
                   "find_document_related_candidates")
 check("the six read-only document tools are registered additively",
       set(DOCUMENT_TOOLS) <= set(registered), str(registered))
+# v2 Phase 4 adds seven read-only semantic/lens tools the same way.
+SEMANTIC_TOOLS = ("list_semantic_runs", "get_semantic_run",
+                  "list_semantic_candidates", "get_semantic_candidate",
+                  "list_project_lenses", "get_project_lens",
+                  "get_semantic_usage")
+check("the seven read-only semantic tools are registered additively",
+      set(SEMANTIC_TOOLS) <= set(registered), str(registered))
 check("every registered tool is an accounted-for addition",
       set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS)
-      | set(DOCUMENT_TOOLS), str(registered))
+      | set(DOCUMENT_TOOLS) | set(SEMANTIC_TOOLS), str(registered))
 
 descriptions = {t.name: (t.description or "") for t in asyncio.run(server.list_tools())}
 check("every tool still carries its docstring description",

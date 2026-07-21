@@ -1145,6 +1145,10 @@ def build_parser() -> argparse.ArgumentParser:
     k_search.set_defaults(func=cmd_knowledge_search)
     knowledge.set_defaults(func=None, _parser=knowledge)
 
+    # -- semantic plane (v2 Phase 4): provider / semantic / lens groups ----
+    from . import cli_semantic
+    cli_semantic.register(sub, common)
+
     serve = sub.add_parser("serve", parents=[common],
                            help="run the FastAPI web application")
     serve.add_argument("--host", default="127.0.0.1",
