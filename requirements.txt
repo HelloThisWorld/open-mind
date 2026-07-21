@@ -29,6 +29,16 @@ defusedxml>=0.7,<0.8     # PSF-2.0      - hardens the stdlib XML parsers that
                          #   python-docx and openpyxl use, against external
                          #   entities, external DTDs and expansion bombs. The
                          #   OOXML parsers DECLINE to parse without it.
+# Semantic provider SDKs (v2 Phase 4). BOTH are OPTIONAL at runtime: every
+# import is lazy inside the one adapter that needs it, so a missing package
+# degrades exactly its own provider kind and nothing else — deterministic
+# OpenMind, the artifact export and the local provider run with neither
+# installed. Both are Apache-2.0/MIT-family licensed; neither is ever allowed
+# to construct its own HTTP transport (an audited client is injected), and no
+# SDK telemetry is enabled. CI installs them to test the adapters against
+# stub transports; no CI job holds a real API key.
+openai>=2.2,<3        # Apache-2.0 — OpenAI + Azure OpenAI adapters
+anthropic>=0.68,<1    # MIT         — Anthropic adapter
 # Vector + embeddings (all local; both have in-process fallbacks)
 chromadb
 fastembed          # pulls onnxruntime (CPU); embeddings run on CPU by default

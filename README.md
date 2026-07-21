@@ -195,12 +195,85 @@ python -m openmind.cli knowledge search --workspace p_... --query "NameCheck tim
   claims a document *implements*, *refines*, *verifies* or *contradicts*
   anything.
 
-Deliberately **not** in this phase: Requirement, Business Rule and Design
-Decision extraction; Claim/Relation tables; Knowledge-Graph edges;
-requirement-to-code traceability; and **OCR** — an image-only PDF is *detected*
-and reported `needs-ocr`, with no text invented for it and no claim that OCR
-ran. Full design:
+Deliberately **not** in this phase: Claim/Relation tables; Knowledge-Graph
+edges; requirement-to-code traceability; and **OCR** — an image-only PDF is
+*detected* and reported `needs-ocr`, with no text invented for it and no claim
+that OCR ran. Full design:
 [docs/v2/phase-3-document-ingestion.md](docs/v2/phase-3-document-ingestion.md).
+
+---
+
+## Semantic Plane (v2 Phase 4)
+
+Phase 4 adds the first place a generative model is allowed to *propose*
+engineering knowledge — and fences it on every side. A provider-neutral
+semantic plane can extract Requirements, Business Rules, Design Decisions,
+Constraints, Interfaces, Acceptance Criteria, Failure Modes, Data Models,
+Workflows and Test Cases from your ingested documents and code — as
+**candidates**, never as truth.
+
+```bash
+# configure a provider (the key VALUE is never stored — only the env var NAME)
+python -m openmind.cli provider configure \
+  --name openai-main --kind openai --api-key-env OPENAI_API_KEY \
+  --fast-model configured-fast-model \
+  --standard-model configured-standard-model \
+  --strong-model configured-strong-model \
+  --max-classification internal --json
+
+# opt the workspace in (everything defaults to restricted + remote OFF)
+python -m openmind.cli semantic policy set \
+  --workspace p_... --classification internal --allow-remote \
+  --provider openai-main --json
+
+# plan (deterministic, zero provider calls), then analyze, then review
+python -m openmind.cli semantic plan \
+  --workspace p_... --tasks requirement-extraction,interface-extraction \
+  --scope documents --json
+python -m openmind.cli semantic analyze \
+  --workspace p_... --tasks requirement-extraction,interface-extraction \
+  --scope documents --wait --json
+python -m openmind.cli semantic candidates --workspace p_... --type requirement --json
+python -m openmind.cli semantic review \
+  --workspace p_... --candidate sc_... --decision confirm --json
+```
+
+- **Off until you turn it on.** Ordinary `ingest` / `asset add` /
+  `document add` make **zero** model calls — there is no implicit analysis.
+  Every workspace starts `restricted` with remote use disabled; a remote call
+  happens only when policy, profile classification cap, credential and budget
+  all agree, checked *before* any content is serialized.
+- **Local and cloud share one SPI.** A loopback OpenAI-compatible server
+  (separate from the legacy Ask client, which is untouched), OpenAI,
+  Anthropic and Azure OpenAI — all through one audited transport pinned to
+  exactly the profile's host, every request logged with byte counts and
+  hashes (never bodies, never headers). A deterministic mock provider drives
+  the whole test suite; CI holds no API key and calls no real endpoint.
+- **Model output is a claim until the Evidence store agrees.** Every candidate
+  must cite Evidence ids that exist in this workspace *and* were part of the
+  request, and every quote must be a substring of the immutable snapshot.
+  Fabrications are rejected locally; final confidence is derived
+  deterministically — the model's own confidence is just a recorded hint.
+- **Resumable, cacheable, budget-bounded.** Analysis runs checkpoint per
+  target and resume without re-billing completed work. An identical re-run is
+  a local cache hit (zero provider calls). Budgets cap request/run/daily
+  tokens and strong-model use; exhaustion yields an honest `partial` run.
+  Unknown costs stay `null` — never a made-up zero.
+- **Staleness instead of silent drift.** A new Revision stales the candidates
+  it fed (and their dependent relation/conflict candidates), preserving both
+  the history and any confirmed review status.
+- **Adaptive Project Lenses.** Templates project into read-only built-in
+  lenses; organizations can ship lens files; and a strong model can *induce*
+  a lens from bounded representative samples — stored `provisional`,
+  deterministically validated against the whole corpus, and requiring
+  explicit human approval **and** activation. An active lens narrows semantic
+  planning only; deterministic ingestion never changes.
+
+Deliberately **not** in this phase: canonical Entity/Claim/Relation tables,
+Knowledge-Graph edges, automatic candidate promotion, requirement-to-code
+traceability, conflict *resolution*, and OCR. Candidate promotion and the
+Knowledge Graph are Phase 5. Full design:
+[docs/v2/phase-4-semantic-plane.md](docs/v2/phase-4-semantic-plane.md).
 
 ---
 
@@ -512,11 +585,22 @@ capabilities are added *beside* them, never in place of one:
 | `search_documents` | Document search; exact identifiers outrank similar text. |
 | `search_knowledge` | Code and documents, returned as separate sections. |
 | `find_document_related_candidates` | Observed mentions, labelled `candidate`, never confirmed relations. |
+| `list_semantic_runs` | Semantic analysis runs with per-status target counts. |
+| `get_semantic_run` | One run: tasks, checkpoints, usage totals (honest nulls). |
+| `list_semantic_candidates` | Verified semantic candidates — always `status: "candidate"`. |
+| `get_semantic_candidate` | One candidate with its verified evidence quotes. |
+| `list_project_lenses` | Stored lenses + built-in Template projections + organization files. |
+| `get_project_lens` | One lens with its deterministic validation report. |
+| `get_semantic_usage` | A run's provider-usage ledger (`null` cost when no price is known). |
 
-There is deliberately **no document-write MCP tool**: importing reads a local
-file, and exposing that over MCP would let a client make the server read a path
-it chose. Claude Code drives `openmind document add` through its shell instead,
-where the command is visible.
+That is 9 core + 4 asset + 6 document + 7 semantic/lens = **26 tools**, every
+addition read-only. There is deliberately **no document-write MCP tool**
+(importing reads a local file, and exposing that over MCP would let a client
+make the server read a path it chose) and **no semantic-write MCP tool** —
+nothing on MCP configures a provider, changes a workspace's egress policy,
+triggers a paid analysis, reviews a candidate or activates a lens. Claude Code
+drives `openmind document add` / `semantic analyze` / `lens approve` through
+its shell instead, where the command (and any cloud use) is visible.
 
 ---
 
@@ -864,26 +948,30 @@ against the neutral fixture repos in `fixtures/`.
 
 The following are not claimed as complete in the current build:
 
-**v2 enterprise knowledge layer.** Three phases have shipped:
+**v2 enterprise knowledge layer.** Four phases have shipped:
 Phase 1 is the tool-first runtime
 ([docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md)),
 Phase 2 is the canonical **Asset / Revision / Segment / Evidence** model plus the
 immutable content store
-([docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md)), and Phase 3
+([docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md)), Phase 3
 is the deterministic **document-ingestion** plane
-([docs/v2/phase-3-document-ingestion.md](docs/v2/phase-3-document-ingestion.md)).
+([docs/v2/phase-3-document-ingestion.md](docs/v2/phase-3-document-ingestion.md)),
+and Phase 4 is the policy-governed **semantic plane** — evidence-bound
+candidate extraction over local or cloud providers, plus Adaptive Project
+Lenses ([docs/v2/phase-4-semantic-plane.md](docs/v2/phase-4-semantic-plane.md)).
 The following later-phase items are **not** implemented; the foundation creates
 extension points for them rather than building them:
 
-- Requirement, Business Rule, Design Decision and Acceptance Criterion
-  extraction; semantic document classification; document-authority inference;
-- Claim and Relation models;
+- canonical Entity, Claim and Relation tables — every Phase 4 extraction stays
+  a **candidate** until the Phase 5 promotion workflow exists;
 - the engineering Knowledge Graph and requirement-to-code traceability;
+- conflict *resolution* (Phase 4 surfaces conflict **candidates** only) and
+  branch/PR overlays;
 - **OCR** — image-only PDFs are *detected* and marked `needs-ocr`, never read;
 - COBOL, JCL, PPTX and email-archive parsing; Jira and Confluence connectors;
-- cloud model providers (OpenAI, Anthropic, Bedrock, Azure, Vertex) — the
-  runtime remains local-first with no cloud credentials;
-- conflict detection and branch overlays;
+- cloud **embeddings** and native provider batch APIs (semantic *reasoning*
+  may use a cloud provider when a workspace opts in; embeddings and ordinary
+  ingestion remain fully local);
 - historical (non-current-revision) document search;
 - webhook integration and a Bundle 2.0 artifact schema (export stays at
   schema 1.x);

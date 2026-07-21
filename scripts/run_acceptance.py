@@ -102,6 +102,50 @@ SUITE: List[Script] = [
            "additive REST routes + read-only MCP document tools + the "
            "compatibility gate"),
 
+    # -- semantic plane (v2 Phase 4) ----------------------------------------
+    # Ordered cheapest-first: profile/policy/prompt checks are sub-second;
+    # the pipeline suites ingest fixture documents and run the mock provider.
+    Script("verify_semantic_profiles", CORE,
+           "provider profiles: atomic machine-local store, secret-free "
+           "persistence, endpoint policy, SDK isolation"),
+    Script("verify_semantic_policy", CORE,
+           "workspace policy: fail-closed defaults, classification gate, "
+           "pre-content rejection, payload allow-list"),
+    Script("verify_semantic_transport", CORE,
+           "audited semantic egress: host pinning, HTTPS, redirect "
+           "containment, redaction, no-bypass repository scan"),
+    Script("verify_semantic_providers", CORE,
+           "provider adapters via stub transports: structured output, "
+           "error taxonomy, retries, honest degradation"),
+    Script("verify_semantic_prompts", CORE,
+           "prompt-injection boundary: untrusted packet separation, no "
+           "tools, no CoT, fixed schemas, versioned prompts"),
+    Script("verify_semantic_verifier", CORE,
+           "evidence verifier: ownership, inclusion, quote verification, "
+           "locally derived confidence"),
+    Script("verify_semantic_analysis", CORE,
+           "analysis pipeline: zero-call planning/ingestion, checkpointed "
+           "targets, failure isolation, resume, bounded pairs"),
+    Script("verify_semantic_cache", CORE,
+           "semantic cache: exact hits call no provider; key sensitivity; "
+           "--force; cache-disabled policy"),
+    Script("verify_semantic_budget", CORE,
+           "budgets: every cap, honest partial runs, preserved work, "
+           "null costs"),
+    Script("verify_semantic_staleness", CORE,
+           "staleness: revision changes stale candidates transitively; "
+           "review preserved; startup backstop"),
+    Script("verify_project_lenses", CORE,
+           "Project Lenses: Template projection, organization files, safe "
+           "patterns, bounded induction, deterministic validation, "
+           "approval lifecycle"),
+    Script("verify_semantic_cli", CORE,
+           "semantic CLI contract: JSON, exit codes, secret-free output, "
+           "provider/semantic/lens commands"),
+    Script("verify_semantic_adapters", CORE,
+           "additive REST + 7 read-only MCP tools + the 26-tool "
+           "compatibility gate + artifact/bridge/Ask invariants"),
+
     # -- template / docs pipeline -------------------------------------------
     Script("verify_templates", CORE, "template profile selection and validation"),
     Script("verify_facets", CORE, "template facets, roles and projections"),

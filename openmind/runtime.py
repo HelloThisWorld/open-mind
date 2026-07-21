@@ -112,6 +112,14 @@ class OpenMindRuntime:
         return self.services.documents
 
     @property
+    def semantic(self):
+        return self.services.semantic
+
+    @property
+    def lenses(self):
+        return self.services.lenses
+
+    @property
     def export(self):
         return self.services.export
 

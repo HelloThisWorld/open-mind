@@ -321,15 +321,166 @@ sections and never asserts a relationship between them.
 `needs-ocr`, and produces no blocks. No text is invented for it, and no result
 ever claims OCR ran. Running OCR is Phase 4+.
 
-**Why Requirement extraction is Phase 4.** This phase ingests and normalizes the
-raw document layer. Extracting Requirements, Business Rules, Design Decisions or
-Acceptance Criteria — and asserting how they relate to code — requires semantic
-verification, and asserting it without that would put unverifiable claims into
-immutable history.
-
 **Why `.openmind` stays at schema 1.1.0.** The artifact bundle is a frozen
 integration contract that external consumers depend on. The document model is
 not exported through it, so nothing downstream changes.
+
+### `provider` — semantic provider profiles (v2 Phase 4)
+
+Provider profiles are **machine-local** configuration
+(`~/.openmind/providers.json`): which endpoints this machine may reach and
+which environment variable holds each credential. **The key VALUE is never
+stored, logged or accepted as an argument** — there is deliberately no
+`--api-key` flag, and the parser refuses prefix-abbreviations that could
+smuggle one in.
+
+```bash
+# list profiles with their static validation (invalid ones stay visible)
+python -m openmind.cli provider list --json
+
+# create/update a profile. Only the ENV VAR NAME is stored; model names are
+# yours to configure — OpenMind never hardcodes a current model as a default.
+python -m openmind.cli provider configure \
+  --name openai-main \
+  --kind openai \
+  --api-key-env OPENAI_API_KEY \
+  --fast-model configured-fast-model \
+  --standard-model configured-standard-model \
+  --strong-model configured-strong-model \
+  --max-classification internal \
+  --json
+
+# a local OpenAI-compatible profile (llama-server etc.) must be loopback
+python -m openmind.cli provider configure \
+  --name local-semantic --kind local-openai \
+  --endpoint http://127.0.0.1:7081/v1 --json
+
+# validate configuration (NO network call); test with one explicit call
+python -m openmind.cli provider validate --name openai-main --json
+python -m openmind.cli provider test --name openai-main --live --json
+
+# remove (refused while a workspace policy selects it, unless --force)
+python -m openmind.cli provider remove --name openai-main --json
+```
+
+Supported kinds: `local-openai` (loopback only), `openai`, `anthropic`,
+`azure-openai` (requires `--endpoint` + `--azure-api-version`), `mock`
+(tests). Remote endpoints must be HTTPS; every call is pinned to exactly the
+profile's host through the audited semantic transport and recorded in
+`data/semantic_audit.log` (byte counts and hashes — never bodies, never
+headers).
+
+### `semantic` — explicit, policy-gated analysis (v2 Phase 4)
+
+Semantic analysis is **opt-in per workspace and per invocation**. Ordinary
+`ingest` / `asset add` / `document add` never call a model; there is no
+implicit `--analyze`. Every workspace starts `restricted` with remote use
+**off**, and a remote call happens only when policy, profile, classification,
+credential and budget ALL permit it — checked before any content leaves the
+process.
+
+```bash
+# show / set the workspace policy (fail-closed defaults)
+python -m openmind.cli semantic policy show --workspace p_... --json
+python -m openmind.cli semantic policy set \
+  --workspace p_... \
+  --classification internal \
+  --allow-remote \
+  --provider openai-main \
+  --max-requests 100 --max-input-tokens 500000 \
+  --max-output-tokens 100000 --max-strong-requests 5 \
+  --json
+
+# dry-run plan: deterministic, writes nothing, calls NO provider
+python -m openmind.cli semantic plan \
+  --workspace p_... \
+  --tasks requirement-extraction,interface-extraction \
+  --scope documents --json
+
+# run analysis (a resumable, budget-bounded background job)
+python -m openmind.cli semantic analyze \
+  --workspace p_... \
+  --tasks requirement-extraction,interface-extraction \
+  --scope documents --wait --json
+
+# resume an interrupted/partial run — completed targets are never re-billed
+python -m openmind.cli semantic resume --workspace p_... --run run_... --wait --json
+
+# inspect runs, candidates, relations, conflicts and the usage ledger
+python -m openmind.cli semantic runs --workspace p_... --json
+python -m openmind.cli semantic show --workspace p_... --run run_... --json
+python -m openmind.cli semantic candidates \
+  --workspace p_... --type requirement --review-status unreviewed \
+  --lifecycle-status active --json
+python -m openmind.cli semantic candidate --workspace p_... --candidate sc_... --json
+python -m openmind.cli semantic relations --workspace p_... --json
+python -m openmind.cli semantic conflicts --workspace p_... --json
+python -m openmind.cli semantic usage --workspace p_... --run run_... --json
+
+# review: confirm / reject / reset (bounded note, caller-supplied reviewer)
+python -m openmind.cli semantic review \
+  --workspace p_... --candidate sc_... \
+  --decision confirm --note "Reviewed against the cited specification." --json
+```
+
+**Candidates are never canonical truth.** Every extraction is stored as a
+CANDIDATE with locally verified Evidence: each cited id must exist in this
+workspace, must have been part of the request, and each quote must be a
+substring of the immutable snapshot (whitespace-normalized). Fabricated
+citations are rejected. Final confidence is derived **locally** (`high` needs
+an explicit identifier or normative language plus an exact verified quote);
+the model's own confidence is recorded as a hint and decides nothing.
+Confirming a candidate marks it suitable for later promotion — the canonical
+Knowledge Graph is Phase 5.
+
+**Caching and cost honesty.** An identical re-analysis is a local cache hit
+and performs zero provider calls; `--force` bypasses. Token usage is recorded
+per request exactly as the provider reported it (`null` when it did not).
+Cost is estimated only from an optional machine-local `pricing.json`;
+without one, `estimated_cost` is `null` with `cost_source: "unknown"` —
+never a fabricated zero. Budget exhaustion stops new requests, keeps
+completed work and reports the run `partial` with `budget_exhausted`.
+
+**Staleness.** A new Revision of a source stales its candidates (and their
+dependent relation/conflict candidates) — preserved, queryable, marked. A
+confirmed-but-stale candidate keeps its review status.
+
+### `lens` — Adaptive Project Lenses (v2 Phase 4)
+
+A lens is a small declarative description of how THIS project is organized —
+roles, identifier schemes, document patterns, which semantic tasks are worth
+running where. An **active lens influences semantic planning only**; it never
+changes deterministic ingestion, and Template Profiles keep working untouched
+(every valid Template is projected as a read-only `builtin` lens).
+
+```bash
+python -m openmind.cli lens list --workspace p_... --json
+python -m openmind.cli lens show --workspace p_... --lens lens_... --json
+
+# induction: deterministic bounded sampling -> ONE strong-model proposal
+python -m openmind.cli lens induce plan --workspace p_... --provider openai-main --json
+python -m openmind.cli lens induce --workspace p_... --provider openai-main --wait --json
+
+# the induced lens is PROVISIONAL; each later step is an explicit human verb
+python -m openmind.cli lens validate --workspace p_... --lens lens_... --json
+python -m openmind.cli lens approve  --workspace p_... --lens lens_... --json
+python -m openmind.cli lens reject   --workspace p_... --lens lens_... \
+  --reason "Role overlap is too high." --json
+python -m openmind.cli lens activate --workspace p_... --lens lens_... --json
+python -m openmind.cli lens deactivate --workspace p_... --lens lens_... --json
+
+# organization lens files (<data dir>/lenses, or OPENMIND_LENSES_DIR)
+python -m openmind.cli lens import --workspace p_... --name org-standard --json
+python -m openmind.cli lens export --workspace p_... --lens lens_... \
+  --output ./org-standard.json --json
+```
+
+An induced lens can never activate itself: it must pass the closed-schema and
+safe-pattern validation (no executable content, no lookbehind/backreference
+regexes, no URLs, capped sizes), then deterministic whole-corpus validation
+(coverage, role overlap, identifier hits), then explicit `approve`, then
+explicit `activate`. Invalid organization lens files stay listed with their
+errors.
 
 ### `export`
 
@@ -358,9 +509,12 @@ python -m openmind.cli mcp serve
 Runs the MCP stdio server — the *same* implementation as
 `python -m openmind.mcp_server`, not a second copy of the tools. The nine core
 tools (`search`, `route`, `dispatch`, `get_glossary`, `find_similar_cases`,
-`save_case`, `get_doc`, `propose_fix`, `apply_fix`) are unchanged. Phase 2 adds
-four **read-only** Asset tools alongside them (`list_assets`, `get_asset`,
-`get_asset_revisions`, `get_evidence`); merely serving MCP never starts the
+`save_case`, `get_doc`, `propose_fix`, `apply_fix`) are unchanged. Alongside
+them: four read-only Asset tools (Phase 2), six read-only document tools
+(Phase 3) and seven read-only semantic/lens tools (Phase 4) — 26 in total.
+Nothing on MCP configures a provider, changes egress policy, starts a
+paid analysis, reviews a candidate or activates a lens; those verbs stay on
+this CLI where they are visible. Merely serving MCP never starts the
 ingestion worker.
 
 stdout is the MCP transport, so all CLI chatter goes to stderr on this command.

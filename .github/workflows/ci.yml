@@ -137,6 +137,60 @@ jobs:
       - name: Document adapter tests
         run: python scripts/run_acceptance.py --only verify_document_adapters
 
+      # -- semantic plane (v2 Phase 4) ------------------------------------
+      # No step below holds a provider credential and none may call a paid
+      # or public model API: providers are tested through injected stub
+      # transports and the deterministic mock provider.
+      - name: Provider-profile tests
+        run: python scripts/run_acceptance.py --only verify_semantic_profiles
+
+      - name: Semantic-policy tests
+        run: python scripts/run_acceptance.py --only verify_semantic_policy
+
+      - name: Semantic-transport tests
+        run: python scripts/run_acceptance.py --only verify_semantic_transport
+
+      - name: Provider-adapter tests
+        run: python scripts/run_acceptance.py --only verify_semantic_providers
+
+      - name: Prompt-boundary tests
+        run: python scripts/run_acceptance.py --only verify_semantic_prompts
+
+      - name: Evidence-verifier tests
+        run: python scripts/run_acceptance.py --only verify_semantic_verifier
+
+      - name: Semantic-analysis tests
+        run: python scripts/run_acceptance.py --only verify_semantic_analysis
+
+      - name: Semantic-cache tests
+        run: python scripts/run_acceptance.py --only verify_semantic_cache
+
+      - name: Semantic-budget tests
+        run: python scripts/run_acceptance.py --only verify_semantic_budget
+
+      - name: Semantic-staleness tests
+        run: python scripts/run_acceptance.py --only verify_semantic_staleness
+
+      - name: Project-Lens tests
+        run: python scripts/run_acceptance.py --only verify_project_lenses
+
+      - name: Semantic CLI tests
+        run: python scripts/run_acceptance.py --only verify_semantic_cli
+
+      - name: Semantic adapter tests
+        run: python scripts/run_acceptance.py --only verify_semantic_adapters
+
+      - name: No provider credential reaches CI
+        run: |
+          python - <<'PY'
+          import os
+          for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                       "AZURE_OPENAI_API_KEY"):
+              assert not os.environ.get(name), f"{name} must not be set in CI"
+          print("no provider credential present — semantic tests ran "
+                "offline against stubs, as required")
+          PY
+
       # The generated fixtures must regenerate to the same DOCUMENT, so an
       # "unchanged" document never mints a new Revision and the incremental
       # guarantee stays testable.
@@ -206,8 +260,9 @@ jobs:
           from openmind.runtime import get_runtime
 
           # The nine core tools are a STABLE external contract; Phase 2 adds
-          # read-only Asset tools and Phase 3 read-only document tools
-          # ALONGSIDE them, never in place of one.
+          # read-only Asset tools, Phase 3 read-only document tools and
+          # Phase 4 read-only semantic/lens tools ALONGSIDE them, never in
+          # place of one. 9 + 4 + 6 + 7 = 26, exactly.
           core = {"search", "route", "dispatch", "get_glossary",
                   "find_similar_cases", "save_case", "get_doc",
                   "propose_fix", "apply_fix"}
@@ -215,19 +270,27 @@ jobs:
           document = {"list_documents", "get_document", "get_document_outline",
                       "search_documents", "search_knowledge",
                       "find_document_related_candidates"}
+          semantic = {"list_semantic_runs", "get_semantic_run",
+                      "list_semantic_candidates", "get_semantic_candidate",
+                      "list_project_lenses", "get_project_lens",
+                      "get_semantic_usage"}
           server = mcp_server.create_mcp_server(get_runtime())
           names = {t.name for t in asyncio.run(server.list_tools())}
           assert core <= names, f"core MCP tool missing: {core - names}"
           assert asset <= names, f"asset MCP tool missing: {asset - names}"
           assert document <= names, f"document MCP tool missing: {document - names}"
-          expected = core | asset | document
+          assert semantic <= names, f"semantic MCP tool missing: {semantic - names}"
+          expected = core | asset | document | semantic
           assert names == expected, f"unexpected MCP tools: {names ^ expected}"
-          # Phase 3 adds NO document-write tool: importing reads a local file,
-          # and exposing that over MCP would let a client make the server read
-          # a path it chose.
+          assert len(names) == 26, f"expected 26 tools, got {len(names)}"
+          # No write/import tool: Phase 3 adds no document writer and Phase 4
+          # adds nothing that configures providers, changes policy, starts a
+          # paid analysis, reviews a candidate or activates a lens.
           assert not {n for n in names
                       if n.startswith(("add_", "import_", "create_",
-                                       "delete_", "update_"))}, names
+                                       "delete_", "update_", "set_",
+                                       "start_", "approve_", "activate_",
+                                       "review_", "configure_"))}, names
           assert server.name == "open-mind", server.name
           print("MCP smoke OK:", len(names), "tools")
           PY
@@ -323,7 +386,7 @@ jobs:
       - name: Artifact export contract
         run: python tests/verify_artifacts.py
 
-      - name: Migration to v0004 + content-store byte round-trip
+      - name: Migration to v0005 + content-store byte round-trip
         shell: bash
         run: |
           python - <<'PY'
@@ -332,11 +395,14 @@ jobs:
           os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
           from openmind import db, content_store as cs
           db.init_db()
-          assert db.migration_status()["version"] == 4, db.migration_status()
+          assert db.migration_status()["version"] == 5, db.migration_status()
           conn = db._c()
           tables = {r[0] for r in conn.execute(
               "SELECT name FROM sqlite_master WHERE type='table'")}
           assert {"document_parses", "document_index"} <= tables, tables
+          assert {"workspace_semantic_policies", "semantic_analysis_runs",
+                  "semantic_candidates", "semantic_cache", "semantic_usage",
+                  "project_lenses"} <= tables, tables
           assert "content_blob_hash" in {
               r[1] for r in conn.execute("PRAGMA table_info(segments)")}
           assert "payload_json" in {
@@ -348,7 +414,100 @@ jobs:
           assert h == hashlib.sha256(data).hexdigest()
           assert cs.put("p_smoke0000ci", data) == h          # reuse
           assert cs.get("p_smoke0000ci", h) == data          # round-trip
-          print("migration v0003 + content-store round-trip OK:", h[:12])
+          print("migration v0005 + content-store round-trip OK:", h[:12])
+          PY
+
+      # -- semantic plane smoke (v2 Phase 4) ------------------------------
+      # The mock provider drives one real analysis end-to-end on every OS:
+      # machine-local profile, policy, analysis, verified candidate, exact
+      # cache hit, staleness after a new revision, Built-in Lens projection
+      # and organization-lens validation. Zero network, zero credentials.
+      - name: Semantic plane smoke (mock provider, offline)
+        shell: bash
+        run: |
+          export OPENMIND_DATA_DIR="$(mktemp -d)"
+          export OPENMIND_MACHINE_DIR="$(mktemp -d)"
+          python - <<'PY'
+          import json, os, pathlib, tempfile
+          from openmind.runtime import get_runtime
+          from openmind.semantic.models import ProviderProfile
+          from openmind.semantic.providers import profiles
+          from openmind.semantic.providers.mock_provider import RECORDED_REQUESTS
+
+          rt = get_runtime()
+          pid = rt.workspaces.create("ci-semantic")["id"]
+          src = pathlib.Path(tempfile.mkdtemp())
+          doc = src / "requirements.md"
+          doc.write_text("# Reqs\n\nREQ-CI-001: The job shall finish.\n",
+                         encoding="utf-8")
+          assert rt.documents.add_document(
+              pid, str(doc), wait=True, timeout=300)["status"] == "new_asset"
+
+          # machine-local provider profile (never a key value on disk)
+          from openmind import db
+          from openmind.semantic.context import resolve_evidence_text
+          evidence_id = None
+          for a in db.list_assets(pid, limit=50):
+              for s in db.list_segments(pid, a["current_revision_id"], limit=50):
+                  ev = db.get_evidence_for_segment(pid, s["id"])
+                  if ev and "shall finish" in (resolve_evidence_text(pid, ev["id"]) or ""):
+                      evidence_id = ev["id"]
+          assert evidence_id
+          profiles.upsert_profile(ProviderProfile(
+              name="ci-mock", kind="mock", metadata={"responses": {
+                  "requirement-extraction": {"candidates": [{
+                      "candidateType": "requirement", "stableKey": "REQ-CI-001",
+                      "title": "Finish", "statement": "The job shall finish.",
+                      "attributes": {},
+                      "evidence": [{"evidenceId": evidence_id,
+                                    "quote": "The job shall finish."}],
+                      "confidenceHint": "medium", "reason": "normative"}]}}}))
+          assert profiles.providers_file().is_file()
+
+          sem = rt.semantic
+          sem.set_policy(pid, provider_profile="ci-mock")
+          run = sem.start_analysis(pid, task_types=["requirement-extraction"],
+                                   wait=True, timeout=300)["run"]
+          assert run["status"] == "done", run
+          cands = sem.list_candidates(pid, candidate_type="requirement")
+          assert cands["total"] == 1 and \
+              cands["candidates"][0]["evidence_status"] == "verified"
+
+          # exact cache hit: zero further provider calls
+          before = len(RECORDED_REQUESTS)
+          run2 = sem.start_analysis(pid, task_types=["requirement-extraction"],
+                                    wait=True, timeout=300)["run"]
+          assert len(RECORDED_REQUESTS) == before, "cache hit must call nothing"
+          assert run2["summary"]["counters"]["cache_hits"] >= 1
+
+          # staleness after a new revision
+          cid = cands["candidates"][0]["id"]
+          doc.write_text(doc.read_text(encoding="utf-8") + "\nMore.\n",
+                         encoding="utf-8")
+          aid = rt.documents.list_documents(pid)["documents"][0]["id"]
+          rt.documents.add_document(pid, str(doc), asset_id=aid,
+                                    wait=True, timeout=300)
+          assert sem.get_candidate(pid, cid)["lifecycle_status"] == "stale"
+
+          # Built-in Lens projection + organization lens validation
+          lenses = rt.lenses
+          builtin = [l for l in lenses.list_lenses(pid)["lenses"]
+                     if l["source"] == "builtin"]
+          assert builtin, "expected Template projections"
+          import openmind.config as config
+          lens_dir = config.DATA_DIR / "lenses"
+          lens_dir.mkdir(parents=True, exist_ok=True)
+          (lens_dir / "ci-org.json").write_text(json.dumps({
+              "schemaVersion": "2.0.0", "name": "ci-org",
+              "description": "ci lens",
+              "roles": [{"name": "docs", "pathGlobs": ["*.md"],
+                          "namePatterns": [], "annotations": []}]}),
+              encoding="utf-8")
+          org = [l for l in lenses.list_lenses(pid, source="organization")
+                 ["lenses"] if l["name"] == "ci-org"]
+          assert org and org[0]["validation"]["result"] == "valid", org
+          print("semantic smoke OK: candidate persisted + verified, cache "
+                "hit, staleness, lenses")
           PY
 
       - name: CLI asset help + fixture ingest + asset list + evidence read

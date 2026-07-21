@@ -49,6 +49,11 @@ def start_worker() -> None:
     _shutdown.clear()
     _recover_on_restart()
     reconcile_enrichment()   # completeness backstop after any restart/crash
+    # Semantic-staleness backstop (spec §22): a crash between a revision
+    # commit and its reconciliation would otherwise leave candidates falsely
+    # active until the next ingest. Incremental + indexed, so this is cheap.
+    for _p in db.list_projects():
+        reconcile_semantic_staleness(_p["id"])
     t = threading.Thread(target=_worker_loop, name="openmind-job-worker", daemon=True)
     t.start()
 
@@ -113,6 +118,10 @@ def _worker_loop() -> None:
                 _run_ask(job["job_id"])
             elif job["type"] == "enrich":
                 _run_enrich(job["job_id"])
+            elif job["type"] == "semantic_analysis":
+                _run_semantic_analysis(job["job_id"])
+            elif job["type"] == "lens_induction":
+                _run_lens_induction(job["job_id"])
             else:
                 db.update_job(job["job_id"], status="failed",
                               error=f"unknown job type {job['type']}")
@@ -350,6 +359,133 @@ def reconcile_enrichment() -> int:
             if enqueue_enrich(p["id"]):
                 queued += 1
     return queued
+
+
+#: Keys a semantic-analysis payload may carry — identifiers and options ONLY
+#: (spec §24). Source or document content in a job row would put project text
+#: into the portable database; anything outside this list is dropped.
+_SEMANTIC_PAYLOAD_KEYS = frozenset({
+    "analysis_run_id", "workspace_id", "task_types", "scope",
+    "provider_profile", "model_tier", "budget_overrides", "force",
+})
+
+
+def enqueue_semantic_analysis(project_id: str,
+                              payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Queue one semantic analysis run (v2 Phase 4). The run row (created by
+    the service) is the source of truth; the payload carries only its id plus
+    the safe option echo."""
+    safe = {k: v for k, v in (payload or {}).items()
+            if k in _SEMANTIC_PAYLOAD_KEYS}
+    if not safe.get("analysis_run_id"):
+        raise ValueError("semantic_analysis payload needs an analysis_run_id")
+    job = db.create_job(project_id, "semantic_analysis", None)
+    db.set_job_payload(job["job_id"], safe)
+    _wake.set()
+    return db.get_job(job["job_id"])
+
+
+def _run_semantic_analysis(job_id: str) -> None:
+    """Execute one semantic analysis run inside the single worker.
+
+    The heavy lifting lives in :mod:`openmind.semantic.runner`; this wrapper
+    wires the job engine's pause/terminate checkpoints and progress
+    persistence into it. Imported lazily so a build with the semantic plane
+    somehow unavailable degrades only this job type.
+    """
+    from .semantic import runner as semantic_runner
+    from .semantic import store as semantic_store
+    from .semantic.models import SemanticRunStatus
+
+    job = db.get_job(job_id)
+    payload = db.get_job_payload(job_id)
+    run_id = str(payload.get("analysis_run_id") or "")
+    workspace_id = str(payload.get("workspace_id") or job["project_id"])
+    db.update_job(job_id, step="running-analysis")
+
+    def _tick(**counters: Any) -> None:
+        _progress(job_id, **counters)
+
+    try:
+        summary = semantic_runner.execute_run(
+            run_id, workspace_id,
+            checkpoint=lambda: _checkpoint(job_id),
+            log=lambda message: _log(job_id, message),
+            progress=_tick)
+    except _TerminateSignal:
+        semantic_store.update_run(run_id,
+                                  status=SemanticRunStatus.CANCELLED,
+                                  error="terminated by user",
+                                  finished_at=db.now())
+        raise
+    except _PauseSignal:
+        # Targets are checkpointed; the run row stays 'running' and resumes.
+        raise
+    db.update_job(job_id, status="done", step="done", finished_at=db.now(),
+                  progress={**(db.get_job(job_id) or {}).get("progress", {}),
+                            "summary_status": summary.get("status", "")})
+
+
+def enqueue_lens_induction(project_id: str,
+                           payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Queue one Project-Lens induction (v2 Phase 4): a single bounded
+    strong-tier request whose result is stored PROVISIONAL. Payload carries
+    identifiers only, like every Phase 4 job."""
+    safe = {k: v for k, v in (payload or {}).items()
+            if k in _SEMANTIC_PAYLOAD_KEYS}
+    if not safe.get("analysis_run_id"):
+        raise ValueError("lens_induction payload needs an analysis_run_id")
+    job = db.create_job(project_id, "lens_induction", None)
+    db.set_job_payload(job["job_id"], safe)
+    _wake.set()
+    return db.get_job(job["job_id"])
+
+
+def _run_lens_induction(job_id: str) -> None:
+    from .semantic.lenses import induction
+    from .semantic import store as semantic_store
+    from .semantic.models import SemanticRunStatus
+
+    job = db.get_job(job_id)
+    payload = db.get_job_payload(job_id)
+    run_id = str(payload.get("analysis_run_id") or "")
+    workspace_id = str(payload.get("workspace_id") or job["project_id"])
+    db.update_job(job_id, step="inducing-lens")
+    try:
+        result = induction.execute_induction(run_id=run_id,
+                                             workspace_id=workspace_id)
+    except _TerminateSignal:
+        semantic_store.update_run(run_id,
+                                  status=SemanticRunStatus.CANCELLED,
+                                  error="terminated by user",
+                                  finished_at=db.now())
+        raise
+    if result.get("status") == SemanticRunStatus.DONE:
+        db.update_job(job_id, status="done", step="done",
+                      finished_at=db.now(),
+                      progress={"lens_id": result.get("lens_id", ""),
+                                "validation_result":
+                                    result.get("validation_result", "")})
+    else:
+        db.update_job(job_id, status="failed", step="done",
+                      error=str(result.get("errors") or
+                                result.get("error") or "induction failed")[:500],
+                      finished_at=db.now())
+
+
+def reconcile_semantic_staleness(project_id: str) -> None:
+    """Post-commit staleness hook (spec §22): mark semantic candidates whose
+    source revisions moved on as stale. Best-effort — a reconciliation
+    failure must never fail the ingest that triggered it."""
+    try:
+        from .semantic import store as semantic_store
+        result = semantic_store.reconcile_staleness(project_id)
+        if any(result.values()):
+            print(f"[semantic] staleness reconciled for {project_id}: "
+                  f"{result}", flush=True)
+    except Exception as exc:
+        print(f"[semantic] staleness reconciliation failed for "
+              f"{project_id}: {exc}", flush=True)
 
 
 def enqueue_ask(scope_id: str, pids: List[str], project_id: str,
@@ -1046,6 +1182,13 @@ def _run_ingest(job_id: str) -> None:
 
     # ---- done ----
     _checkpoint(job_id)  # if terminate raced in after the last file, abort before finalize
+    # New current revisions may have superseded the sources of semantic
+    # candidates; reconcile BEFORE the job flips to done. Placement matters:
+    # doing this between update_job(done) and enqueue_gendocs would widen the
+    # zero-active-jobs window that "wait until idle" pollers observe, and a
+    # poll landing inside it would conclude the pipeline finished before the
+    # docs job was even enqueued.
+    reconcile_semantic_staleness(project_id)
     db.update_job(job_id, status="done", step="done", finished_at=db.now())
     db.set_project_state(project_id, "ready")
     _log(job_id, "[done] ingest complete; triggering docs sync + wiki enrichment.")
@@ -1283,6 +1426,11 @@ def _run_document_ingest(job_id: str) -> None:
                  f"{len(report.get('warnings') or [])} warning(s).")
     progress = dict(job.get("progress") or {})
     progress["import_report"] = report
+    # A new document revision stales semantic candidates tied to its
+    # predecessor; reconcile BEFORE the job flips to done (same ordering
+    # rationale as the code-ingest path), so a caller that waited on the job
+    # never observes a done import with staleness still pending.
+    reconcile_semantic_staleness(project_id)
     db.update_job(job_id, status="done", step="done", finished_at=db.now(),
                   progress=progress)
 

@@ -389,6 +389,127 @@ DOCUMENT_TOOL_NAMES = tuple(fn.__name__ for fn in DOCUMENT_TOOLS)
 
 
 # ---------------------------------------------------------------------------
+# Semantic + lens tools (OpenMind v2 Phase 4) — ADDITIVE and STRICTLY
+# READ-ONLY.
+#
+# Deliberately absent: anything that configures providers, changes a
+# workspace's egress policy, starts a paid/cloud analysis, reviews a
+# candidate or activates a lens. Those verbs stay on the CLI (and REST),
+# where cloud use and configuration remain visible to the human running
+# them; Claude Code can invoke the explicit CLI commands through its shell.
+# Every result is bounded, workspace-scoped and explicit about candidate
+# status — nothing returned here is canonical truth.
+# ---------------------------------------------------------------------------
+def list_semantic_runs(scope: str, status: Optional[str] = None,
+                       limit: int = 20) -> Dict[str, Any]:
+    """List a workspace's semantic analysis runs (bounded, newest first).
+    Read-only. ``status`` filters on planned/queued/running/partial/done/
+    failed/cancelled; a `partial` run has honest unprocessed targets."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().semantic.list_runs(pid, limit=limit, status=status)
+
+
+def get_semantic_run(scope: str, run_id: str) -> Dict[str, Any]:
+    """One analysis run: status, task set, per-status target counts and its
+    usage totals (token numbers are NULL when the provider reported none)."""
+    from .runtime import get_runtime
+    from .semantic.errors import AnalysisRunNotFound
+    semantic = get_runtime().semantic
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return semantic.get_run(pid, run_id)
+        except AnalysisRunNotFound as exc:
+            last = exc
+    raise last or ValueError(f"run not found: {run_id}")
+
+
+def list_semantic_candidates(scope: str, candidate_type: Optional[str] = None,
+                             review_status: Optional[str] = None,
+                             lifecycle_status: str = "active",
+                             limit: int = 50) -> Dict[str, Any]:
+    """List semantic CANDIDATES (bounded). Every entry carries
+    ``status: "candidate"`` — a locally verified model proposal awaiting
+    human review, never a canonical requirement/rule/relation. Lifecycle
+    defaults to ``active``; pass ``stale`` or empty for history."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().semantic.list_candidates(
+        pid, candidate_type=candidate_type, review_status=review_status,
+        lifecycle_status=(lifecycle_status or None), limit=limit)
+
+
+def get_semantic_candidate(scope: str, candidate_id: str) -> Dict[str, Any]:
+    """One candidate with its verified evidence quotes. ``confidence`` is
+    locally derived from evidence verification — the model's hint is shown
+    separately and never decides."""
+    from .runtime import get_runtime
+    from .semantic.errors import CandidateNotFound
+    semantic = get_runtime().semantic
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return semantic.get_candidate(pid, candidate_id)
+        except CandidateNotFound as exc:
+            last = exc
+    raise last or ValueError(f"candidate not found: {candidate_id}")
+
+
+def list_project_lenses(scope: str,
+                        source: Optional[str] = None) -> Dict[str, Any]:
+    """List Project Lenses: workspace rows plus virtual built-in Template
+    projections and organization lens files. Read-only — activation and
+    approval are explicit CLI verbs."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().lenses.list_lenses(pid, source=source)
+
+
+def get_project_lens(scope: str, lens_id: str) -> Dict[str, Any]:
+    """One lens with its deterministic validation report and status. An
+    induced lens stays ``provisional`` until a human validates, approves and
+    activates it."""
+    from .runtime import get_runtime
+    from .semantic.errors import LensNotFound
+    lenses = get_runtime().lenses
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return lenses.get_lens(pid, lens_id)
+        except LensNotFound as exc:
+            last = exc
+    raise last or ValueError(f"lens not found: {lens_id}")
+
+
+def get_semantic_usage(scope: str, run_id: str) -> Dict[str, Any]:
+    """One run's provider-usage ledger: per-request tokens, latency, retries
+    and estimated cost (NULL with ``cost_source: unknown`` when no reliable
+    price exists — never a fabricated zero)."""
+    from .runtime import get_runtime
+    from .semantic.errors import AnalysisRunNotFound
+    semantic = get_runtime().semantic
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return semantic.get_usage(pid, run_id)
+        except AnalysisRunNotFound as exc:
+            last = exc
+    raise last or ValueError(f"run not found: {run_id}")
+
+
+#: Additive read-only semantic/lens tools (v2 Phase 4). Registered ALONGSIDE
+#: the nine core, four asset and six document tools — 19 + 7 = 26 in total.
+SEMANTIC_TOOLS: List[Callable[..., Any]] = [
+    list_semantic_runs, get_semantic_run, list_semantic_candidates,
+    get_semantic_candidate, list_project_lenses, get_project_lens,
+    get_semantic_usage,
+]
+
+SEMANTIC_TOOL_NAMES = tuple(fn.__name__ for fn in SEMANTIC_TOOLS)
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
@@ -412,6 +533,8 @@ def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
     for fn in ASSET_TOOLS:                 # additive read-only Asset tools (Phase 2)
         server.tool()(fn)
     for fn in DOCUMENT_TOOLS:              # additive read-only document tools (Phase 3)
+        server.tool()(fn)
+    for fn in SEMANTIC_TOOLS:              # additive read-only semantic/lens tools (Phase 4)
         server.tool()(fn)
     return server
 
