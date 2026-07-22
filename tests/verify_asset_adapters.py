@@ -64,10 +64,15 @@ DOCUMENT = {"list_documents", "get_document", "get_document_outline",
 SEMANTIC = {"list_semantic_runs", "get_semantic_run",
             "list_semantic_candidates", "get_semantic_candidate",
             "list_project_lenses", "get_project_lens", "get_semantic_usage"}
+# Phase 5 nine read-only knowledge-graph tools.
+KNOWLEDGE = {"get_graph_stats", "search_graph", "get_graph_node",
+             "expand_graph", "find_graph_path", "list_engineering_entities",
+             "get_engineering_entity", "get_engineering_claim",
+             "get_engineering_relation"}
 check("all nine core MCP tools remain", CORE <= tool_names)
 check("the four read-only asset MCP tools are added", ASSET <= tool_names)
 check("every registered tool is an accounted-for addition",
-      tool_names == CORE | ASSET | DOCUMENT | SEMANTIC)
+      tool_names == CORE | ASSET | DOCUMENT | SEMANTIC | KNOWLEDGE)
 check("the MCP server keeps its name", server.name == "open-mind")
 
 # ---------------------------------------------------------------------------

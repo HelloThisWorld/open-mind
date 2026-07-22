@@ -288,9 +288,17 @@ SEMANTIC_TOOLS = ("list_semantic_runs", "get_semantic_run",
                   "get_semantic_usage")
 check("the seven read-only semantic tools are registered additively",
       set(SEMANTIC_TOOLS) <= set(registered), str(registered))
+# v2 Phase 5 adds nine read-only knowledge-graph tools the same way.
+KNOWLEDGE_TOOLS = ("get_graph_stats", "search_graph", "get_graph_node",
+                   "expand_graph", "find_graph_path",
+                   "list_engineering_entities", "get_engineering_entity",
+                   "get_engineering_claim", "get_engineering_relation")
+check("the nine read-only graph tools are registered additively",
+      set(KNOWLEDGE_TOOLS) <= set(registered), str(registered))
 check("every registered tool is an accounted-for addition",
       set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS)
-      | set(DOCUMENT_TOOLS) | set(SEMANTIC_TOOLS), str(registered))
+      | set(DOCUMENT_TOOLS) | set(SEMANTIC_TOOLS) | set(KNOWLEDGE_TOOLS),
+      str(registered))
 
 descriptions = {t.name: (t.description or "") for t in asyncio.run(server.list_tools())}
 check("every tool still carries its docstring description",

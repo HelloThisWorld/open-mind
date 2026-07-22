@@ -57,10 +57,11 @@ conn = _db()
 result = migrations.migrate(conn)
 tables = _tables(conn)
 
-check("empty db: runner reports the head version", result.version == 5)
+check("empty db: runner reports the head version", result.version == 6)
 check("empty db: every migration is applied in order",
       result.applied == ["0001_baseline", "0002_paths_sidecar", "0003_asset_model",
-                         "0004_document_ingestion", "0005_semantic_plane"])
+                         "0004_document_ingestion", "0005_semantic_plane",
+                         "0006_knowledge_graph"])
 check("empty db: nothing was reported as already applied", result.already_applied == [])
 check("empty db: not flagged as a legacy baseline", result.baselined_legacy is False)
 check("empty db: schema_migrations ledger exists", "schema_migrations" in tables)
@@ -116,7 +117,8 @@ check("repeat run: applies nothing", again.applied == [])
 check("repeat run: reports every migration as already applied",
       again.already_applied == ["0001_baseline", "0002_paths_sidecar",
                                 "0003_asset_model", "0004_document_ingestion",
-                                "0005_semantic_plane"])
+                                "0005_semantic_plane",
+                                "0006_knowledge_graph"])
 check("repeat run: version is unchanged", again.version == result.version)
 
 # ---------------------------------------------------------------------------
@@ -166,7 +168,7 @@ check("legacy db: detected as legacy before migrating", runner.detect_legacy(leg
 legacy_result = migrations.migrate(legacy)
 
 check("legacy db: reported as a legacy baseline", legacy_result.baselined_legacy is True)
-check("legacy db: brought to head version", legacy_result.version == 5)
+check("legacy db: brought to head version", legacy_result.version == 6)
 check("legacy db: baseline recorded, not skipped",
       "0001_baseline" in legacy_result.applied)
 check("legacy db: v0003 applied on top of the baseline",
@@ -185,6 +187,12 @@ check("legacy db: v0005 applied on top of the baseline",
 check("legacy db: v0005 semantic tables created on the legacy database",
       {"semantic_candidates", "semantic_cache", "project_lenses",
        "workspace_semantic_policies"} <= _tables(legacy))
+check("legacy db: v0006 applied on top of the baseline",
+      "0006_knowledge_graph" in legacy_result.applied)
+check("legacy db: v0006 graph tables created on the legacy database",
+      {"engineering_entities", "engineering_claims", "engineering_relations",
+       "knowledge_decisions", "knowledge_revisions",
+       "knowledge_promotions"} <= _tables(legacy))
 check("legacy db: project row survived",
       legacy.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 1)
 check("legacy db: project meta survived intact",

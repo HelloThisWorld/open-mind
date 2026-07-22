@@ -358,10 +358,10 @@ _, status = run_json("status", "--workspace", WS)
 check("compat: status still reports the Phase 2 asset counts",
       {"assets_total", "revisions", "segments", "evidence"}
       <= set(status["assets"]))
-check("compat: status reports the v0005 schema head",
-      status["schema_version"] == 5)
-check("compat: the version constant advanced to 1.4.0-dev",
-      status["version"] == "1.4.0-dev")
+check("compat: status reports the v0006 schema head",
+      status["schema_version"] == 6)
+check("compat: the version constant advanced to 1.5.0-dev",
+      status["version"] == "1.5.0-dev")
 
 # ---------------------------------------------------------------------------
 bad = [d for d, ok in _results if not ok]
