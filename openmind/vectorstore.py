@@ -544,6 +544,17 @@ def documents_collection_name(project_id: str) -> str:
     return f"documents_{project_id}"
 
 
+def knowledge_collection_name(project_id: str) -> str:
+    """The canonical-graph Entity/Claim projection (OpenMind v2 Phase 5).
+
+    Separate from BOTH ``code_<pid>`` and ``documents_<pid>``: graph text in
+    either would silently change what the frozen search tools return, and
+    code/document chunks in the graph collection would make graph search
+    claim hits it cannot govern.
+    """
+    return f"knowledge_{project_id}"
+
+
 def count_collection(collection_name: str) -> int:
     """Row count for a collection that may not exist yet — 0 if it doesn't.
 
@@ -574,11 +585,12 @@ def get_documents_store(project_id: str) -> _Store:
     return get_store(documents_collection_name(project_id))
 
 
-#: Every per-project collection prefix. `documents_` MUST be listed here or the
-#: startup orphan sweep would not recognize a document collection as belonging
-#: to a project, and would leave it behind forever after a project delete.
+#: Every per-project collection prefix. `documents_` and `knowledge_` MUST be
+#: listed here or the startup orphan sweep would not recognize those
+#: collections as belonging to a project, and would leave them behind forever
+#: after a project delete.
 #: Longest-first, so `code_` cannot shadow a future prefix that starts with it.
-_COLLECTION_PREFIXES = ("documents_", "cases_", "code_")
+_COLLECTION_PREFIXES = ("knowledge_", "documents_", "cases_", "code_")
 
 
 def project_collection_names(project_id: str) -> List[str]:

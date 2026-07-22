@@ -281,16 +281,17 @@ check("6: the document itself is never its own candidate",
 check("6: a mention with no real target produces no candidate",
       not any(c["target"].get("logical_key") == "does-not-exist"
               for c in related["candidates"]))
-# The guard is against CANONICAL Claim/Relation tables (Phase 5 territory).
-# Phase 4's semantic_relation_* tables are explicitly CANDIDATE stores —
-# every row carries candidate status — so tables named *candidate*/
-# *evidence* are the sanctioned exception, not a violation.
+# The guard is against writing CANONICAL Claims/Relations from a
+# deterministic candidate association. Since v2 Phase 5 the canonical graph
+# TABLES exist (engineering_claims / engineering_relations) — but the only
+# paths allowed to fill them are deterministic projection, manual creation
+# and explicit promotion. Observing document candidates must leave them
+# empty: candidates are reported, never persisted as graph truth.
 check("6: nothing was persisted as a canonical relation or claim",
-      not [r[0] for r in db._c().execute(
-          "SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-          if ("relation" in r[0].lower() or "claim" in r[0].lower())
-          and "candidate" not in r[0].lower()
-          and "evidence" not in r[0].lower()])
+      db._c().execute("SELECT COUNT(*) FROM engineering_relations")
+      .fetchone()[0] == 0
+      and db._c().execute("SELECT COUNT(*) FROM engineering_claims")
+      .fetchone()[0] == 0)
 check("6: the limit is respected",
       runtime.documents.find_related_candidates(WS, REQ_ASSET,
                                                 limit=2)["count"] <= 2)

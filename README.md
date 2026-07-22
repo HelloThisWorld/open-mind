@@ -272,8 +272,81 @@ python -m openmind.cli semantic review \
 Deliberately **not** in this phase: canonical Entity/Claim/Relation tables,
 Knowledge-Graph edges, automatic candidate promotion, requirement-to-code
 traceability, conflict *resolution*, and OCR. Candidate promotion and the
-Knowledge Graph are Phase 5. Full design:
+Knowledge Graph shipped in Phase 5 (below). Full design:
 [docs/v2/phase-4-semantic-plane.md](docs/v2/phase-4-semantic-plane.md).
+
+---
+
+## Canonical Knowledge Graph (v2 Phase 5)
+
+Phase 5 adds the first **canonical** engineering knowledge layer: durable,
+versioned, evidence-bound Entities, Claims and Relations in SQLite (no graph
+database), entered through exactly four write paths — deterministic
+projection, explicit manual creation, explicit Candidate promotion, explicit
+Relation-Candidate promotion — and no other.
+
+```bash
+# deterministic, model-free graph seeding from Assets and Segments
+python -m openmind.cli graph seed --workspace p_... --json
+
+# review is NOT promotion: confirming updates candidate metadata only
+python -m openmind.cli semantic review --workspace p_... --candidate sc_... \
+    --decision confirm --json
+
+# the explicit bridge into the canonical graph (plan first, then promote)
+python -m openmind.cli promotion plan    --workspace p_... --candidate sc_... --json
+python -m openmind.cli promotion promote --workspace p_... --candidate sc_... \
+    --actor reviewer-name --note "Approved for canonical knowledge." --json
+
+# query it
+python -m openmind.cli graph search --workspace p_... --query REQ-NC-017 --json
+python -m openmind.cli graph path   --workspace p_... --from ent_... --to ent_... --json
+
+# export it (a SEPARATE draft contract; .openmind 1.1.0 is untouched)
+python -m openmind.cli bundle export --workspace p_... --output ./.openmind-v2 \
+    --current-only --json
+python -m openmind.bundle_verify ./.openmind-v2
+```
+
+- **Nothing is promoted automatically.** A confirmed candidate stays a
+  candidate until `promotion promote` — which re-checks review status,
+  staleness and evidence verification *inside* the transaction, is
+  idempotent, and records a promotion row, an immutable Human Decision and
+  exactly one Knowledge Revision. Stale or rejected candidates cannot be
+  promoted (there is no `--force`), and conflict candidates cannot be
+  promoted at all (conflict *resolution* is Phase 6).
+- **Deterministic projection is model-free.** Source assets become
+  `code-component`s, Java types/methods `code-symbol`s, OpenAPI operations
+  `interface`s, SQL objects `database-object`s; containment is `explicit`,
+  name-based call edges stay `inferred` with ambiguity preserved. A generic
+  document never becomes a Requirement, a test-source method never becomes a
+  Test Case, and an unchanged re-sync writes nothing and mints no revision.
+- **Every active Claim carries verified Evidence** (quotes must match the
+  immutable snapshot — fabrications are rejected locally), every Relation
+  carries provenance, `possibly-related` is never presented as `implements`,
+  and authority (`authoritative` / `non-authoritative` / …) changes only by
+  explicit human decision — never inferred.
+- **History is governed, not overwritten.** Corrections supersede, withdrawal
+  excludes without deleting, merge keeps the source addressable (resolving to
+  its target), split moves exactly what the caller lists, and staleness
+  reconciliation marks — never erases — knowledge whose source Revisions
+  moved on. Every graph transaction is one monotonic, per-workspace
+  **Knowledge Revision**; every governance write is one immutable
+  **Human Decision** with a caller-supplied actor.
+- **Graph search is exact-first.** A separate `knowledge_<workspace>` vector
+  collection indexes active Entities and Claims (code/document collections
+  untouched); retrieval fuses exact canonical key > exact alias > exact
+  identifier token > lexical > vector similarity, so an exact identifier is
+  never outranked by something that merely reads similar. Expansion and path
+  discovery are bounded, deterministic, and honest about truncation — and the
+  generic `graph path` command is deliberately *not* labelled Requirement
+  Traceability (that formal engine is Phase 6).
+
+Deliberately **not** in this phase: automatic promotion, conflict resolution,
+formal Requirement-to-Code traceability and coverage/gap reports,
+change-impact analysis, Neo4j or any external graph service, Cypher/Gremlin,
+a Graph UI, Bundle 2.0 freeze/import, and OCR. Full design:
+[docs/v2/phase-5-knowledge-graph.md](docs/v2/phase-5-knowledge-graph.md).
 
 ---
 
@@ -592,15 +665,28 @@ capabilities are added *beside* them, never in place of one:
 | `list_project_lenses` | Stored lenses + built-in Template projections + organization files. |
 | `get_project_lens` | One lens with its deterministic validation report. |
 | `get_semantic_usage` | A run's provider-usage ledger (`null` cost when no price is known). |
+| `get_graph_stats` | Canonical-graph statistics + the current Knowledge Revision. |
+| `search_graph` | Exact-first graph search over Entities and Claims (separate sections). |
+| `get_graph_node` | One node in the stable read shape (entity/claim/asset/revision/segment/evidence). |
+| `expand_graph` | Bounded, deterministic BFS expansion with an honest `truncated` flag. |
+| `find_graph_path` | Bounded shortest paths with evidence summaries — found / no-path / truncated. |
+| `list_engineering_entities` | Canonical Entities (bounded; active by default). |
+| `get_engineering_entity` | One Entity with aliases, bindings, claims and relations. |
+| `get_engineering_claim` | One Claim with its verified evidence joins. |
+| `get_engineering_relation` | One Relation with state, provenance and evidence. |
 
-That is 9 core + 4 asset + 6 document + 7 semantic/lens = **26 tools**, every
-addition read-only. There is deliberately **no document-write MCP tool**
-(importing reads a local file, and exposing that over MCP would let a client
-make the server read a path it chose) and **no semantic-write MCP tool** —
-nothing on MCP configures a provider, changes a workspace's egress policy,
-triggers a paid analysis, reviews a candidate or activates a lens. Claude Code
-drives `openmind document add` / `semantic analyze` / `lens approve` through
-its shell instead, where the command (and any cloud use) is visible.
+That is 9 core + 4 asset + 6 document + 7 semantic/lens + 9 graph =
+**35 tools**, every addition read-only. There is deliberately **no
+document-write MCP tool** (importing reads a local file, and exposing that
+over MCP would let a client make the server read a path it chose), **no
+semantic-write MCP tool** — nothing on MCP configures a provider, changes a
+workspace's egress policy, triggers a paid analysis, reviews a candidate or
+activates a lens — and **no graph-write MCP tool**: nothing on MCP promotes
+a candidate, creates an Entity/Claim/Relation, merges, splits, changes
+authority, seeds/syncs the graph or exports a bundle. Claude Code drives
+`openmind document add` / `semantic analyze` / `promotion promote` /
+`entity merge` through its shell instead, where the command (and any cloud
+use) is visible.
 
 ---
 
@@ -788,8 +874,15 @@ openmind/
                    candidate association. Imports no parser dependency itself.
   document_rag.py  document retrieval (vector + exact-token + RRF) and the
                    combined code/document knowledge search
+  knowledge/       the canonical Engineering Knowledge Graph (v2 Phase 5):
+                   closed vocabularies, graph store + transactional Knowledge
+                   Revisions, evidence verifier, promotion, deterministic
+                   projector, staleness reconciliation, bounded traversal,
+                   exact-first search, vector projection, Bundle 2.0 Draft
+  bundle_verify.py standalone stdlib-only Knowledge Bundle verifier
   migrations/      versioned, checksummed SQLite schema migrations
-                   (v0003 = Asset model, v0004 = document ingestion)
+                   (v0003 = Asset model, v0004 = document ingestion,
+                   v0005 = semantic plane, v0006 = knowledge graph)
   walker.py        selection-aware walk, .gitignore handling, hashing
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
@@ -948,7 +1041,7 @@ against the neutral fixture repos in `fixtures/`.
 
 The following are not claimed as complete in the current build:
 
-**v2 enterprise knowledge layer.** Four phases have shipped:
+**v2 enterprise knowledge layer.** Five phases have shipped:
 Phase 1 is the tool-first runtime
 ([docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md)),
 Phase 2 is the canonical **Asset / Revision / Segment / Evidence** model plus the
@@ -956,26 +1049,32 @@ immutable content store
 ([docs/v2/phase-2-asset-model.md](docs/v2/phase-2-asset-model.md)), Phase 3
 is the deterministic **document-ingestion** plane
 ([docs/v2/phase-3-document-ingestion.md](docs/v2/phase-3-document-ingestion.md)),
-and Phase 4 is the policy-governed **semantic plane** — evidence-bound
+Phase 4 is the policy-governed **semantic plane** — evidence-bound
 candidate extraction over local or cloud providers, plus Adaptive Project
-Lenses ([docs/v2/phase-4-semantic-plane.md](docs/v2/phase-4-semantic-plane.md)).
+Lenses ([docs/v2/phase-4-semantic-plane.md](docs/v2/phase-4-semantic-plane.md)),
+and Phase 5 is the canonical **Engineering Knowledge Graph** — deterministic
+projection, explicit candidate promotion, Knowledge Revisions, Human
+Decisions, graph search/traversal and the Knowledge Bundle 2.0 **Draft**
+([docs/v2/phase-5-knowledge-graph.md](docs/v2/phase-5-knowledge-graph.md)).
 The following later-phase items are **not** implemented; the foundation creates
 extension points for them rather than building them:
 
-- canonical Entity, Claim and Relation tables — every Phase 4 extraction stays
-  a **candidate** until the Phase 5 promotion workflow exists;
-- the engineering Knowledge Graph and requirement-to-code traceability;
-- conflict *resolution* (Phase 4 surfaces conflict **candidates** only) and
-  branch/PR overlays;
+- formal Requirement-to-Code **traceability**, coverage/gap reports and the
+  conflict-resolution engine (Phase 6 — the generic `graph path` command is
+  deliberately not labelled traceability, and Phase 4 conflict **candidates**
+  stay candidates);
+- change-impact analysis, branch/PR overlays, webhooks and graph-based CI
+  policy gates;
 - **OCR** — image-only PDFs are *detected* and marked `needs-ocr`, never read;
 - COBOL, JCL, PPTX and email-archive parsing; Jira and Confluence connectors;
 - cloud **embeddings** and native provider batch APIs (semantic *reasoning*
   may use a cloud provider when a workspace opts in; embeddings and ordinary
   ingestion remain fully local);
 - historical (non-current-revision) document search;
-- webhook integration and a Bundle 2.0 artifact schema (export stays at
-  schema 1.x);
-- a typed worker pool or job DAG replacing the current single-worker engine.
+- the Bundle 2.0 schema **freeze** and Bundle import (the Draft exporter and
+  verifier shipped in Phase 5; `.openmind` export stays at schema 1.x);
+- a typed worker pool or job DAG replacing the current single-worker engine;
+- new Agent Skills and Skill Forge / Verification integration (Phase 8).
 
 **Other work not yet done:**
 

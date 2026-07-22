@@ -675,6 +675,257 @@ def lens_deactivate(project_id: str, lens_id: str) -> Dict[str, Any]:
     return {"lens": _svc().lenses.deactivate(project_id, lens_id)}
 
 
+# ---------------------------------------------------------------------------
+# Canonical Knowledge Graph (OpenMind v2 Phase 5) — ADDITIVE routes only.
+#
+# Workspace-scoped through the service layer, bounded, typed: there is
+# deliberately NO generic graph-mutation endpoint — every write is one
+# explicit operation that records a Human Decision and one Knowledge
+# Revision. `/projects` naming is kept; the Phase 3 combined search route
+# POST /projects/{id}/knowledge/search is UNTOUCHED (graph search lives at
+# /knowledge/graph-search).
+# ---------------------------------------------------------------------------
+@app.get("/projects/{project_id}/knowledge/stats")
+def knowledge_stats(project_id: str) -> Dict[str, Any]:
+    return _svc().knowledge.get_stats(project_id)
+
+
+@app.get("/projects/{project_id}/knowledge/revisions")
+def knowledge_revisions(project_id: str, limit: int = 50,
+                        offset: int = 0) -> Dict[str, Any]:
+    return _svc().knowledge.list_knowledge_revisions(
+        project_id, limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/knowledge/revisions/{revision_number}")
+def knowledge_revision(project_id: str,
+                       revision_number: int) -> Dict[str, Any]:
+    return {"revision": _svc().knowledge.get_knowledge_revision(
+        project_id, revision_number)}
+
+
+@app.get("/projects/{project_id}/knowledge/decisions")
+def knowledge_decisions(project_id: str, target_kind: Optional[str] = None,
+                        target_id: Optional[str] = None,
+                        decision_type: Optional[str] = None,
+                        limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    return _svc().knowledge.list_decisions(
+        project_id, target_kind=target_kind, target_id=target_id,
+        decision_type=decision_type, limit=limit, offset=offset)
+
+
+@app.post("/projects/{project_id}/knowledge/seed/plan")
+def knowledge_seed_plan(project_id: str) -> Dict[str, Any]:
+    return {"plan": _svc().knowledge.plan_seed(project_id)}
+
+
+@app.post("/projects/{project_id}/knowledge/seed")
+def knowledge_seed(project_id: str,
+                   req: models.GraphActorReq) -> Dict[str, Any]:
+    return _svc().knowledge.seed(project_id, actor=req.actor)
+
+
+@app.post("/projects/{project_id}/knowledge/sync")
+def knowledge_sync(project_id: str,
+                   req: models.GraphActorReq) -> Dict[str, Any]:
+    return _svc().knowledge.sync(project_id, actor=req.actor)
+
+
+@app.post("/projects/{project_id}/knowledge/reconcile")
+def knowledge_reconcile(project_id: str,
+                        req: models.GraphActorReq) -> Dict[str, Any]:
+    return _svc().knowledge.reconcile_staleness(project_id, actor=req.actor)
+
+
+@app.post("/projects/{project_id}/knowledge/graph-search")
+def knowledge_graph_search(project_id: str,
+                           req: models.GraphSearchReq) -> Dict[str, Any]:
+    """Search canonical Entities and Claims (exact > lexical > vector). The
+    Phase 3 code+document search stays at POST /knowledge/search."""
+    return _svc().knowledge.search_entities(
+        project_id, req.query, limit=req.limit,
+        include_stale=req.include_stale)
+
+
+@app.get("/projects/{project_id}/knowledge/nodes/{node_id}")
+def knowledge_node(project_id: str, node_id: str) -> Dict[str, Any]:
+    return {"node": _svc().knowledge.get_node(project_id, node_id)}
+
+
+@app.post("/projects/{project_id}/knowledge/nodes/{node_id}/expand")
+def knowledge_expand(project_id: str, node_id: str,
+                     req: models.GraphExpandReq) -> Dict[str, Any]:
+    return _svc().knowledge.expand_node(
+        project_id, node_id, direction=req.direction,
+        relation_types=req.relation_types or None, depth=req.depth,
+        node_limit=req.node_limit, edge_limit=req.edge_limit,
+        include_stale=req.include_stale)
+
+
+@app.post("/projects/{project_id}/knowledge/path")
+def knowledge_path(project_id: str,
+                   req: models.GraphPathReq) -> Dict[str, Any]:
+    """Bounded shortest-path discovery. Generic reachability — NOT the
+    Phase 6 formal Requirement Traceability."""
+    return _svc().knowledge.find_path(
+        project_id, req.source, req.target,
+        relation_types=req.relation_types or None, direction=req.direction,
+        max_depth=req.max_depth, include_stale=req.include_stale)
+
+
+@app.get("/projects/{project_id}/entities")
+def list_entities(project_id: str, entity_type: Optional[str] = None,
+                  lifecycle_status: Optional[str] = "active",
+                  origin: Optional[str] = None, limit: int = 100,
+                  offset: int = 0) -> Dict[str, Any]:
+    return _svc().knowledge.list_entities(
+        project_id, entity_type=entity_type,
+        lifecycle_status=lifecycle_status, origin=origin, limit=limit,
+        offset=offset)
+
+
+@app.get("/projects/{project_id}/entities/{entity_id}")
+def get_entity(project_id: str, entity_id: str) -> Dict[str, Any]:
+    return {"entity": _svc().knowledge.get_entity(project_id, entity_id)}
+
+
+@app.post("/projects/{project_id}/entities")
+def create_entity(project_id: str,
+                  req: models.EntityCreateReq) -> Dict[str, Any]:
+    return _svc().knowledge.create_entity(
+        project_id, entity_type=req.entity_type,
+        canonical_key=req.canonical_key, display_name=req.display_name,
+        description=req.description, evidence=req.evidence,
+        actor=req.actor, note=req.note, source_command="rest:POST /entities")
+
+
+@app.post("/projects/{project_id}/entities/{entity_id}/aliases")
+def add_entity_alias(project_id: str, entity_id: str,
+                     req: models.AliasAddReq) -> Dict[str, Any]:
+    return _svc().knowledge.add_alias(
+        project_id, entity_id=entity_id, alias=req.alias,
+        alias_type=req.alias_type, evidence_id=req.evidence_id,
+        actor=req.actor, note=req.note,
+        source_command="rest:POST /entities/{id}/aliases")
+
+
+@app.post("/projects/{project_id}/entities/{entity_id}/merge")
+def merge_entity(project_id: str, entity_id: str,
+                 req: models.EntityMergeReq) -> Dict[str, Any]:
+    return _svc().knowledge.merge_entities(
+        project_id, source_entity_id=entity_id,
+        target_entity_id=req.target_entity_id, actor=req.actor,
+        note=req.note, source_command="rest:POST /entities/{id}/merge")
+
+
+@app.post("/projects/{project_id}/entities/{entity_id}/split")
+def split_entity(project_id: str, entity_id: str,
+                 req: models.EntitySplitReq) -> Dict[str, Any]:
+    return _svc().knowledge.split_entity(
+        project_id, source_entity_id=entity_id,
+        new_entity_type=req.new_entity_type,
+        new_canonical_key=req.new_canonical_key,
+        new_display_name=req.new_display_name, claim_ids=req.claim_ids,
+        binding_ids=req.binding_ids,
+        relation_rewrites=req.relation_rewrites, actor=req.actor,
+        note=req.note, source_command="rest:POST /entities/{id}/split")
+
+
+@app.post("/projects/{project_id}/entities/{entity_id}/authority")
+def entity_authority(project_id: str, entity_id: str,
+                     req: models.AuthorityReq) -> Dict[str, Any]:
+    return _svc().knowledge.set_authority(
+        project_id, kind="entity", object_id=entity_id,
+        authority=req.authority, actor=req.actor, note=req.note,
+        source_command="rest:POST /entities/{id}/authority")
+
+
+@app.get("/projects/{project_id}/claims")
+def list_claims(project_id: str, entity_id: Optional[str] = None,
+                claim_type: Optional[str] = None,
+                lifecycle_status: Optional[str] = "active",
+                limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    return _svc().knowledge.list_claims(
+        project_id, entity_id=entity_id, claim_type=claim_type,
+        lifecycle_status=lifecycle_status, limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/claims/{claim_id}")
+def get_claim(project_id: str, claim_id: str) -> Dict[str, Any]:
+    return {"claim": _svc().knowledge.get_claim(project_id, claim_id)}
+
+
+@app.post("/projects/{project_id}/claims")
+def create_claim(project_id: str,
+                 req: models.ClaimCreateReq) -> Dict[str, Any]:
+    return _svc().knowledge.create_claim(
+        project_id, entity_id=req.entity_id, claim_type=req.claim_type,
+        statement=req.statement, evidence=req.evidence, actor=req.actor,
+        note=req.note, source_command="rest:POST /claims")
+
+
+@app.get("/projects/{project_id}/relations")
+def list_relations(project_id: str, entity_id: Optional[str] = None,
+                   relation_type: Optional[str] = None,
+                   relation_state: Optional[str] = None,
+                   lifecycle_status: Optional[str] = "active",
+                   limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    return _svc().knowledge.list_relations(
+        project_id, entity_id=entity_id, relation_type=relation_type,
+        relation_state=relation_state, lifecycle_status=lifecycle_status,
+        limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/relations/{relation_id}")
+def get_relation(project_id: str, relation_id: str) -> Dict[str, Any]:
+    return {"relation": _svc().knowledge.get_relation(project_id,
+                                                      relation_id)}
+
+
+@app.post("/projects/{project_id}/relations")
+def create_relation(project_id: str,
+                    req: models.RelationCreateReq) -> Dict[str, Any]:
+    return _svc().knowledge.create_relation(
+        project_id, source_entity_id=req.source_entity_id,
+        target_entity_id=req.target_entity_id,
+        relation_type=req.relation_type,
+        relation_state=req.relation_state, confidence=req.confidence,
+        evidence=req.evidence, actor=req.actor, note=req.note,
+        source_command="rest:POST /relations")
+
+
+@app.post("/projects/{project_id}/promotions/plan")
+def promotion_plan(project_id: str,
+                   req: models.PromotionReq) -> Dict[str, Any]:
+    return {"plan": _svc().knowledge.plan_candidate_promotion(
+        project_id, req.candidate_id)}
+
+
+@app.post("/projects/{project_id}/promotions")
+def promotion_promote(project_id: str,
+                      req: models.PromotionReq) -> Dict[str, Any]:
+    return _svc().knowledge.promote_candidate(
+        project_id, req.candidate_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /promotions")
+
+
+@app.post("/projects/{project_id}/relation-promotions/plan")
+def relation_promotion_plan(project_id: str,
+                            req: models.RelationPromotionReq
+                            ) -> Dict[str, Any]:
+    return {"plan": _svc().knowledge.plan_relation_promotion(
+        project_id, req.relation_candidate_id)}
+
+
+@app.post("/projects/{project_id}/relation-promotions")
+def relation_promotion_promote(project_id: str,
+                               req: models.RelationPromotionReq
+                               ) -> Dict[str, Any]:
+    return _svc().knowledge.promote_relation(
+        project_id, req.relation_candidate_id, actor=req.actor,
+        note=req.note, source_command="rest:POST /relation-promotions")
+
+
 def _reject_conflicting_targets(req: models.DocumentImportReq) -> None:
     """``asset`` / ``logical_key`` / ``new_asset`` name three different targets
     for one set of bytes; combining them has no single correct meaning, so it is

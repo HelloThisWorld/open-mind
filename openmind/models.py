@@ -230,3 +230,117 @@ class LensImportReq(BaseModel):
     """Import an organization lens file (by name or filename) into the
     workspace."""
     name: str
+
+
+# ---------------------------------------------------------------------------
+# Canonical Knowledge Graph (OpenMind v2 Phase 5) — request bodies.
+#
+# Every mutating request carries explicit ``actor`` and ``note``; identity is
+# never inferred from the transport. Evidence references are
+# ``{evidence_id, quote?, role?}`` dicts validated against the immutable
+# store at the service boundary.
+# ---------------------------------------------------------------------------
+class GraphSearchReq(BaseModel):
+    """Graph search over canonical Entities and Claims (NOT the Phase 3
+    code+document knowledge search, which keeps its own route)."""
+    query: str
+    limit: int = 20
+    include_stale: bool = False
+
+
+class GraphExpandReq(BaseModel):
+    direction: str = "both"
+    relation_types: List[str] = Field(default_factory=list)
+    depth: int = 2
+    node_limit: int = 200
+    edge_limit: int = 600
+    include_stale: bool = False
+
+
+class GraphPathReq(BaseModel):
+    source: str
+    target: str
+    relation_types: List[str] = Field(default_factory=list)
+    direction: str = "both"
+    max_depth: int = 6
+    include_stale: bool = False
+
+
+class GraphActorReq(BaseModel):
+    """The minimal governance body: who did it, and why."""
+    actor: str = ""
+    note: str = ""
+
+
+class EntityCreateReq(BaseModel):
+    entity_type: str
+    canonical_key: str
+    display_name: str
+    description: str = ""
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    actor: str = ""
+    note: str = ""
+
+
+class ClaimCreateReq(BaseModel):
+    entity_id: str
+    claim_type: str
+    statement: str
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    actor: str = ""
+    note: str = ""
+
+
+class RelationCreateReq(BaseModel):
+    source_entity_id: str
+    target_entity_id: str
+    relation_type: str
+    relation_state: str = "confirmed"
+    confidence: str = "medium"
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    actor: str = ""
+    note: str = ""
+
+
+class AliasAddReq(BaseModel):
+    alias: str
+    alias_type: str = "manual"
+    evidence_id: str = ""
+    actor: str = ""
+    note: str = ""
+
+
+class EntityMergeReq(BaseModel):
+    target_entity_id: str
+    actor: str = ""
+    note: str = ""
+
+
+class EntitySplitReq(BaseModel):
+    new_entity_type: str
+    new_canonical_key: str
+    new_display_name: str = ""
+    claim_ids: List[str] = Field(default_factory=list)
+    binding_ids: List[str] = Field(default_factory=list)
+    relation_rewrites: List[Dict[str, str]] = Field(default_factory=list)
+    actor: str = ""
+    note: str = ""
+
+
+class AuthorityReq(BaseModel):
+    kind: str                       # entity | claim | relation
+    authority: str
+    actor: str = ""
+    note: str = ""
+
+
+class PromotionReq(BaseModel):
+    candidate_id: str
+    actor: str = ""
+    note: str = ""
+
+
+class RelationPromotionReq(BaseModel):
+    relation_candidate_id: str
+    actor: str = ""
+    note: str = ""

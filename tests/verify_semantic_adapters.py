@@ -59,7 +59,11 @@ check("no write/configure/paid-trigger tool exists on MCP",
 import asyncio  # noqa: E402
 server = mcp_server.create_mcp_server()
 registered = asyncio.new_event_loop().run_until_complete(server.list_tools())
-check("FastMCP registers all 26", len(registered) == 26)
+# Phase 5 registers nine additive read-only graph tools beside these 26;
+# the graph suite (verify_knowledge_adapters) accounts for each by name.
+check("FastMCP registers the 26 pre-Phase-5 tools (35 with the graph set)",
+      len(registered) == 26 + len(mcp_server.KNOWLEDGE_TOOLS)
+      and len(mcp_server.KNOWLEDGE_TOOLS) == 9)
 
 # ---------------------------------------------------------------------------
 # 2. REST: every legacy route intact; semantic routes additive

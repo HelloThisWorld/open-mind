@@ -40,6 +40,7 @@ class ServiceContainer:
         self._health: Optional[HealthService] = None
         self._semantic = None
         self._lenses = None
+        self._knowledge = None
 
     @property
     def workspaces(self) -> WorkspaceService:
@@ -100,6 +101,17 @@ class ServiceContainer:
             self._lenses = LensService(self.workspaces, self.jobs,
                                        ensure_worker=self._ensure_worker)
         return self._lenses
+
+    @property
+    def knowledge(self):
+        # Canonical Engineering Knowledge Graph (v2 Phase 5). Lazy for the
+        # same reason as the semantic plane: export/doctor never pay for it,
+        # and constructing it never starts a worker or opens a collection.
+        if self._knowledge is None:
+            from ..knowledge.service import KnowledgeService
+            self._knowledge = KnowledgeService(
+                self.workspaces, ensure_worker=self._ensure_worker)
+        return self._knowledge
 
     @property
     def export(self) -> ExportService:

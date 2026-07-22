@@ -120,6 +120,10 @@ class OpenMindRuntime:
         return self.services.lenses
 
     @property
+    def knowledge(self):
+        return self.services.knowledge
+
+    @property
     def export(self):
         return self.services.export
 
