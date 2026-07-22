@@ -98,9 +98,14 @@ check("coverage is reproducible after the graph change",
 snapshots_after = trace.list_coverage_snapshots(pid)
 check("historical snapshots preserved (never overwritten)",
       snapshots_after["count"] == snapshots_before + 1)
-older = snapshots_after["snapshots"][-1]
+# Not by list position: created_at has one-second resolution, so two
+# snapshots born in the same second order by random id. The property is
+# that every non-current snapshot is still queryable with its metrics.
+older = [s for s in snapshots_after["snapshots"]
+         if s["id"] != coverage2["snapshot"]["id"]]
 check("old snapshot remains queryable with its own metrics",
-      older["id"] != coverage2["snapshot"]["id"])
+      len(older) == snapshots_before
+      and all(s["metrics"] for s in older))
 
 # -- stale paths excluded from current coverage -------------------------------
 # Reject the late test's verifies relation; refresh recomputes with the
