@@ -203,6 +203,69 @@ SUITE: List[Script] = [
            "additive knowledge REST routes + exactly 9 read-only MCP "
            "graph tools + the 35-tool compatibility gate"),
 
+    # -- traceability + conflicts (v2 Phase 6) -------------------------------
+    # Ordered cheapest-first: the migration suite is mostly pure sqlite; the
+    # policy suite validates in-memory documents; the engine suites build
+    # one small canonical lifecycle each; cli/adapters drive the full
+    # surfaces end to end.
+    Script("verify_traceability_migration", CORE,
+           "v0007 schema: tables, indexes, idempotency, v1-v6 checksum "
+           "immutability, FK cascades, data survival, Phase 5 gate"),
+    Script("verify_traceability_policies", CORE,
+           "trace policies: built-ins, invalid org files visible, closed "
+           "vocabularies, executable content rejected, deterministic "
+           "checksums, selection governance, snapshot invalidation"),
+    Script("verify_traceability_paths", CORE,
+           "trace paths: complete lifecycle verified, optional/required "
+           "design, possibly-related and calls rejected, stale paths, "
+           "inferred cap, authority disclosure, deterministic ordering, "
+           "reverse code/test traces"),
+    Script("verify_traceability_coverage", CORE,
+           "coverage: honest ratios and null percentages, full/partial/"
+           "untraced, stage-level, stale exclusion, policy-driven status, "
+           "history preserved"),
+    Script("verify_traceability_gaps", CORE,
+           "gaps: every mandatory type, acceptance/expiry/dismissal "
+           "suppression, refused resolution while detected, later refresh "
+           "resolves"),
+    Script("verify_traceability_orphans", CORE,
+           "orphans: requirements/code/tests/documents, untraced never "
+           "invalid, workspace scoping"),
+    Script("verify_traceability_incremental", CORE,
+           "incremental: unchanged no-op, alias no-rebuild, affected-root "
+           "precision, policy change rebuilds all, snapshots preserved, "
+           "revision-move staleness"),
+    Script("verify_conflict_model", CORE,
+           "canonical conflicts: transactional creation, object/evidence "
+           "joins, revision stamps, dedup keys, cross-workspace "
+           "isolation"),
+    Script("verify_conflict_detectors", CORE,
+           "deterministic detectors: timeout/method/path/config/type/"
+           "req-test mismatches, unit normalization, no unit guessing, "
+           "missing test = gap, prose never compared"),
+    Script("verify_conflict_promotion", CORE,
+           "conflict promotion: full eligibility matrix, canonical "
+           "reference resolution, transactional idempotent promotion, "
+           "revision + decision + provenance"),
+    Script("verify_conflict_governance", CORE,
+           "conflict lifecycle: transitions, notes/evidence required, "
+           "expiry reopens, dismissal suppression, no claim rewrites, "
+           "double-ledger audit"),
+    Script("verify_conflict_incremental", CORE,
+           "conflict incrementality: duplicate scan silent, changed "
+           "values supersede, basis-gone stales, detector failure = "
+           "honest partial"),
+    Script("verify_traceability_bundle", CORE,
+           "bundle draft.2: opt-in trace/conflict files, deterministic "
+           "ordering, referential integrity, coverage arithmetic, "
+           "current-only staleness, .openmind 1.1.0 unchanged"),
+    Script("verify_traceability_cli", CORE,
+           "trace/conflict CLI contract: JSON, exit codes, actor/note "
+           "required, every pre-existing command preserved"),
+    Script("verify_traceability_adapters", CORE,
+           "additive trace REST routes + exactly 8 read-only MCP tools + "
+           "the 43-tool compatibility gate + zero provider calls"),
+
     # -- template / docs pipeline -------------------------------------------
     Script("verify_templates", CORE, "template profile selection and validation"),
     Script("verify_facets", CORE, "template facets, roles and projections"),

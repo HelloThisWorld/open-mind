@@ -226,6 +226,55 @@ jobs:
       - name: Knowledge adapter tests (REST + 9 MCP tools + 35-tool gate)
         run: python scripts/run_acceptance.py --only verify_knowledge_adapters
 
+      # -- traceability + conflicts (v2 Phase 6) --------------------------
+      # Deterministic and provider-free by construction: no step below may
+      # call any model API; the adapter suite additionally proves refresh
+      # and scan complete with network entry points monkey-patched to fail.
+      - name: Traceability migration tests (v0007 + Phase 5 gate)
+        run: python scripts/run_acceptance.py --only verify_traceability_migration
+
+      - name: Trace-policy tests
+        run: python scripts/run_acceptance.py --only verify_traceability_policies
+
+      - name: Trace-path tests
+        run: python scripts/run_acceptance.py --only verify_traceability_paths
+
+      - name: Coverage tests
+        run: python scripts/run_acceptance.py --only verify_traceability_coverage
+
+      - name: Gap tests
+        run: python scripts/run_acceptance.py --only verify_traceability_gaps
+
+      - name: Orphan tests
+        run: python scripts/run_acceptance.py --only verify_traceability_orphans
+
+      - name: Incremental trace tests
+        run: python scripts/run_acceptance.py --only verify_traceability_incremental
+
+      - name: Conflict model tests
+        run: python scripts/run_acceptance.py --only verify_conflict_model
+
+      - name: Conflict detector tests
+        run: python scripts/run_acceptance.py --only verify_conflict_detectors
+
+      - name: Conflict promotion tests
+        run: python scripts/run_acceptance.py --only verify_conflict_promotion
+
+      - name: Conflict governance tests
+        run: python scripts/run_acceptance.py --only verify_conflict_governance
+
+      - name: Conflict incrementality tests
+        run: python scripts/run_acceptance.py --only verify_conflict_incremental
+
+      - name: Traceability bundle tests (draft.2 exporter + verifier)
+        run: python scripts/run_acceptance.py --only verify_traceability_bundle
+
+      - name: Trace/conflict CLI tests
+        run: python scripts/run_acceptance.py --only verify_traceability_cli
+
+      - name: Trace adapter tests (REST + 8 MCP tools + 43-tool gate)
+        run: python scripts/run_acceptance.py --only verify_traceability_adapters
+
       - name: No provider credential reaches CI
         run: |
           python - <<'PY'
@@ -307,8 +356,9 @@ jobs:
 
           # The nine core tools are a STABLE external contract; Phase 2 adds
           # read-only Asset tools, Phase 3 read-only document tools, Phase 4
-          # read-only semantic/lens tools and Phase 5 read-only graph tools
-          # ALONGSIDE them, never in place of one. 9+4+6+7+9 = 35, exactly.
+          # read-only semantic/lens tools, Phase 5 read-only graph tools and
+          # Phase 6 read-only trace/conflict tools ALONGSIDE them, never in
+          # place of one. 9+4+6+7+9+8 = 43, exactly.
           core = {"search", "route", "dispatch", "get_glossary",
                   "find_similar_cases", "save_case", "get_doc",
                   "propose_fix", "apply_fix"}
@@ -324,6 +374,10 @@ jobs:
                        "expand_graph", "find_graph_path",
                        "list_engineering_entities", "get_engineering_entity",
                        "get_engineering_claim", "get_engineering_relation"}
+          trace = {"trace_requirement", "trace_code", "trace_test",
+                   "get_trace_path", "get_traceability_coverage",
+                   "list_traceability_gaps", "list_engineering_conflicts",
+                   "get_engineering_conflict"}
           server = mcp_server.create_mcp_server(get_runtime())
           names = {t.name for t in asyncio.run(server.list_tools())}
           assert core <= names, f"core MCP tool missing: {core - names}"
@@ -331,20 +385,25 @@ jobs:
           assert document <= names, f"document MCP tool missing: {document - names}"
           assert semantic <= names, f"semantic MCP tool missing: {semantic - names}"
           assert knowledge <= names, f"graph MCP tool missing: {knowledge - names}"
-          expected = core | asset | document | semantic | knowledge
+          assert trace <= names, f"trace MCP tool missing: {trace - names}"
+          expected = core | asset | document | semantic | knowledge | trace
           assert names == expected, f"unexpected MCP tools: {names ^ expected}"
-          assert len(names) == 35, f"expected 35 tools, got {len(names)}"
+          assert len(names) == 43, f"expected 43 tools, got {len(names)}"
           # No write/import tool: Phase 3 adds no document writer, Phase 4
-          # nothing that configures providers or triggers paid analysis, and
+          # nothing that configures providers or triggers paid analysis,
           # Phase 5 nothing that promotes, creates, merges, changes
-          # authority, seeds/syncs the graph or exports bundles.
+          # authority, seeds/syncs the graph or exports bundles, and
+          # Phase 6 nothing that changes policies, refreshes traceability,
+          # scans, promotes, resolves, accepts risk or dismisses.
           assert not {n for n in names
                       if n.startswith(("add_", "import_", "create_",
                                        "delete_", "update_", "set_",
                                        "start_", "approve_", "activate_",
                                        "review_", "configure_", "promote_",
                                        "merge_", "split_", "seed_", "sync_",
-                                       "export_", "withdraw_"))}, names
+                                       "export_", "withdraw_", "refresh_",
+                                       "scan_", "resolve_", "accept_",
+                                       "dismiss_", "reopen_"))}, names
           assert server.name == "open-mind", server.name
           print("MCP smoke OK:", len(names), "tools")
           PY
@@ -440,7 +499,7 @@ jobs:
       - name: Artifact export contract
         run: python tests/verify_artifacts.py
 
-      - name: Migration to v0006 + content-store byte round-trip
+      - name: Migration to v0007 + content-store byte round-trip
         shell: bash
         run: |
           python - <<'PY'
@@ -449,7 +508,7 @@ jobs:
           os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
           from openmind import db, content_store as cs
           db.init_db()
-          assert db.migration_status()["version"] == 6, db.migration_status()
+          assert db.migration_status()["version"] == 7, db.migration_status()
           conn = db._c()
           tables = {r[0] for r in conn.execute(
               "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -462,6 +521,12 @@ jobs:
                   "engineering_entity_bindings", "knowledge_decisions",
                   "knowledge_revisions", "knowledge_promotions",
                   "knowledge_projection_state"} <= tables, tables
+          assert {"workspace_traceability_policies", "traceability_runs",
+                  "trace_paths", "trace_path_steps", "trace_path_evidence",
+                  "traceability_gaps", "traceability_coverage_snapshots",
+                  "engineering_conflicts", "engineering_conflict_objects",
+                  "engineering_conflict_evidence",
+                  "engineering_conflict_decisions"} <= tables, tables
           assert "content_blob_hash" in {
               r[1] for r in conn.execute("PRAGMA table_info(segments)")}
           assert "payload_json" in {
@@ -662,7 +727,7 @@ jobs:
           out = pathlib.Path(tempfile.mkdtemp()) / "bundle"
           from openmind.knowledge.bundle import export_bundle
           manifest = export_bundle(pid, str(out), current_only=True)
-          assert manifest["bundleSchemaVersion"] == "2.0.0-draft.1"
+          assert manifest["bundleSchemaVersion"] == "2.0.0-draft.2"
           verdict = subprocess.run(
               [sys.executable, "-m", "openmind.bundle_verify", str(out)],
               capture_output=True, text=True)
@@ -670,6 +735,153 @@ jobs:
           print("knowledge smoke OK: seed -> promote -> path -> bundle "
                 "verified at revision",
                 rt.knowledge.get_current_revision(pid)["knowledge_revision"])
+          PY
+
+      # -- traceability + conflict smoke (v2 Phase 6) ---------------------
+      # The whole Phase 6 chain on every OS: a built-in policy selected, a
+      # complete Requirement -> Interface -> Code -> Test -> Evidence trace
+      # verified, a missing-test gap detected, a deterministic timeout
+      # conflict found, a confirmed Conflict Candidate explicitly promoted,
+      # a coverage snapshot written, and a bundle with the trace/conflict
+      # files exported and verified. Zero network, zero credentials.
+      - name: Traceability smoke (policy, trace, gap, conflict, bundle)
+        shell: bash
+        run: |
+          export OPENMIND_DATA_DIR="$(mktemp -d)"
+          export OPENMIND_MACHINE_DIR="$(mktemp -d)"
+          python - <<'PY'
+          import pathlib, subprocess, sys, tempfile
+          from openmind.runtime import get_runtime
+          from openmind.knowledge.identity import quote_hash
+
+          rt = get_runtime()
+          pid = rt.workspaces.create("ci-trace")["id"]
+          src = pathlib.Path(tempfile.mkdtemp())
+          doc = src / "requirements.md"
+          doc.write_text("# Reqs\n\nREQ-CI-001: The job shall finish.\n",
+                         encoding="utf-8")
+          assert rt.documents.add_document(
+              pid, str(doc), wait=True, timeout=300)["status"] == "new_asset"
+          from openmind import db
+          from openmind.semantic.context import resolve_evidence_text
+          evidence_id = None
+          for a in db.list_assets(pid, limit=50):
+              for s in db.list_segments(pid, a["current_revision_id"],
+                                        limit=50):
+                  ev = db.get_evidence_for_segment(pid, s["id"])
+                  if ev and "shall finish" in (
+                          resolve_evidence_text(pid, ev["id"]) or ""):
+                      evidence_id = ev["id"]
+          assert evidence_id
+          knowledge, trace = rt.knowledge, rt.traceability
+          evidence = [{"evidence_id": evidence_id}]
+
+          def entity(entity_type, key, name):
+              return knowledge.create_entity(
+                  pid, entity_type=entity_type, canonical_key=key,
+                  display_name=name, evidence=evidence, actor="ci",
+                  note="ci")["entity"]
+
+          def claim(target, claim_type, statement):
+              return knowledge.create_claim(
+                  pid, entity_id=target["id"], claim_type=claim_type,
+                  statement=statement, evidence=evidence, actor="ci",
+                  note="ci")["claim"]
+
+          def relate(source, target, relation_type):
+              knowledge.create_relation(
+                  pid, source_entity_id=source["id"],
+                  target_entity_id=target["id"],
+                  relation_type=relation_type, relation_state="confirmed",
+                  evidence=evidence, actor="ci", note="ci")
+
+          req = entity("requirement", "requirement:REQ-CI-001", "REQ-CI-001")
+          claim(req, "normative-statement", "The job shall finish.")
+          iface = entity("interface", "interface:POST:/finish", "Finish API")
+          claim(iface, "interface-contract", "POST /finish.")
+          code = entity("code-component", "code-component:finisher",
+                        "Finisher")
+          claim(code, "behavior", "Finishes the job.")
+          test = entity("test-case", "test-case:CI-T-01", "Finish test")
+          claim(test, "test-expectation", "It finishes.")
+          result = entity("test-result", "test-result:CI-T-01-r1", "Run 1")
+          claim(result, "test-expectation", "Run 1 passed.")
+          relate(iface, req, "refines")
+          relate(code, iface, "implements")
+          relate(test, code, "verifies")
+          relate(result, test, "evidenced-by")
+          req2 = entity("requirement", "requirement:REQ-CI-002",
+                        "REQ-CI-002")
+          claim(req2, "normative-statement", "The job shall also report.")
+          iface2 = entity("interface", "interface:POST:/report",
+                          "Report API")
+          claim(iface2, "interface-contract", "POST /report.")
+          code2 = entity("code-component", "code-component:reporter",
+                         "Reporter")
+          claim(code2, "behavior", "Reports the job.")
+          relate(iface2, req2, "refines")
+          relate(code2, iface2, "implements")
+
+          # built-in policy + refresh + coverage snapshot
+          selected = trace.set_workspace_policy(
+              pid, policy_name="api-service", actor="ci", note="ci policy")
+          assert selected["policy_name"] == "api-service"
+          refreshed = trace.refresh(pid)
+          assert refreshed["run"]["status"] == "done", refreshed
+          coverage = trace.get_coverage(pid)
+          requirements = coverage["snapshot"]["metrics"]["requirements"]
+          assert requirements["total"] == 2, requirements
+          assert requirements["fully_traced"]["count"] == 1
+
+          # complete trace verified + missing-test gap
+          full = trace.trace_requirement(pid, req["id"])
+          evidence_paths = [p for p in full["paths"]
+                            if p["path_kind"] == "requirement-to-evidence"]
+          assert evidence_paths and \
+              evidence_paths[0]["status"] == "verified"
+          gaps = trace.list_gaps(pid, gap_type="missing-test",
+                                 status="open")
+          assert any(g["root_entity_id"] == req2["id"]
+                     for g in gaps["gaps"]), gaps
+
+          # deterministic conflict detection
+          claim(req, "constraint", "The finish timeout is 2 seconds.")
+          claim(req, "constraint", "The finish timeout is 5 seconds.")
+          scan = trace.scan_conflicts(pid, actor="ci")
+          assert scan["status"] == "done" and scan["created"], scan
+
+          # confirmed conflict candidate -> explicit promotion
+          from openmind.semantic import store as semantic_store
+          quote = "The job shall finish."
+          candidate = semantic_store.insert_conflicts(pid, [{
+              "category": "requirement-design",
+              "explanation": "ci candidate", "confidence": "medium",
+              "evidence_status": "verified",
+              "payload": {"subject_key": "requirement:REQ-CI-001"},
+              "evidence": [{"evidence_id": evidence_id, "quote": quote,
+                            "quote_hash": quote_hash(quote),
+                            "role": "supports"}]}])[0]
+          rt.semantic.review_conflict_candidate(pid, candidate,
+                                                decision="confirm",
+                                                reviewer="ci")
+          promoted = trace.promote_conflict_candidate(
+              pid, candidate, actor="ci", note="ci promotion")
+          assert promoted["status"] == "promoted", promoted
+
+          # bundle with the trace/conflict files, verified standalone
+          out = pathlib.Path(tempfile.mkdtemp()) / "bundle"
+          from openmind.knowledge.bundle import export_bundle
+          manifest = export_bundle(pid, str(out), current_only=True,
+                                   include_traceability=True,
+                                   include_conflicts=True)
+          assert manifest["counts"]["tracePaths"] >= 4, manifest["counts"]
+          assert manifest["counts"]["conflicts"] >= 1, manifest["counts"]
+          verdict = subprocess.run(
+              [sys.executable, "-m", "openmind.bundle_verify", str(out)],
+              capture_output=True, text=True)
+          assert verdict.returncode == 0, verdict.stdout + verdict.stderr
+          print("traceability smoke OK: policy -> trace -> gap -> "
+                "conflict -> promotion -> coverage -> bundle")
           PY
 
       - name: CLI asset help + fixture ingest + asset list + evidence read

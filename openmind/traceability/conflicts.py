@@ -127,60 +127,101 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
         verified_drafts.append(draft)
 
     step("deduplicating")
+    # One CURRENT conflict represents one dispute: drafts are grouped by
+    # their subject identity (category + subject + property + detector).
+    # Several simultaneous value pairs on one subject (2s vs 5s, 2s vs
+    # 2000ms, ...) are facets of the SAME dispute — persisting each pair
+    # would both spam governance and ping-pong supersessions across scans.
     to_create: List[Any] = []
     to_supersede: List[Dict[str, Any]] = []
     observed_unchanged: List[str] = []
     suppressed: List[str] = []
     to_reopen: List[Dict[str, Any]] = []
+    absorbed = 0
     seen_keys: set = set()
+    superseding_ids: set = set()
+    groups: Dict[Any, List[Any]] = {}
     for draft in verified_drafts:
         dedup_key = _draft_dedup_key(workspace_id, draft)
         if dedup_key in seen_keys:
             continue
         seen_keys.add(dedup_key)
-        fingerprint = _draft_fingerprint(draft)
-        existing = store.find_conflict_by_dedup_key(workspace_id,
-                                                    dedup_key)
-        if existing is None:
-            to_create.append((draft, dedup_key, fingerprint))
-            continue
-        existing_fingerprint = (existing.get("metadata") or {}).get(
-            "suppression_fingerprint", "")
-        if existing_fingerprint == fingerprint:
-            if existing["status"] == ConflictStatus.DISMISSED:
-                suppressed.append(existing["id"])
-                store.touch_conflict_observation(workspace_id,
-                                                 existing["id"], revision)
-            elif existing["status"] == ConflictStatus.RESOLVED:
-                # Resolved but the identical incompatible state is still
-                # detected: deterministic reopen rule.
-                to_reopen.append({"conflict": existing,
-                                  "reason": "re-detected unchanged after "
-                                            "resolution"})
-            elif existing["status"] == ConflictStatus.STALE:
-                to_reopen.append({"conflict": existing,
-                                  "reason": "re-detected after having "
-                                            "gone stale"})
+        identity = (draft.category, draft.subject_key, draft.property,
+                    draft.detector_name)
+        groups.setdefault(identity, []).append((draft, dedup_key))
+    for identity in sorted(groups, key=str):
+        drafts = sorted(groups[identity], key=lambda d: d[1])
+        exact = None
+        for draft, dedup_key in drafts:
+            match = store.find_conflict_by_dedup_key(workspace_id,
+                                                     dedup_key)
+            if match is not None and \
+                    match["status"] != ConflictStatus.SUPERSEDED:
+                exact = (draft, dedup_key, match)
+                break
+        if exact is not None:
+            draft, dedup_key, existing = exact
+            absorbed += len(drafts) - 1
+            fingerprint = _draft_fingerprint(draft)
+            existing_fingerprint = (existing.get("metadata") or {}).get(
+                "suppression_fingerprint", "")
+            if existing_fingerprint == fingerprint:
+                if existing["status"] == ConflictStatus.DISMISSED:
+                    suppressed.append(existing["id"])
+                    store.touch_conflict_observation(
+                        workspace_id, existing["id"], revision)
+                elif existing["status"] == ConflictStatus.RESOLVED:
+                    # Resolved but the identical incompatible state is
+                    # still detected: deterministic reopen rule.
+                    to_reopen.append({"conflict": existing,
+                                      "reason": "re-detected unchanged "
+                                                "after resolution"})
+                elif existing["status"] == ConflictStatus.STALE:
+                    to_reopen.append({"conflict": existing,
+                                      "reason": "re-detected after having "
+                                                "gone stale"})
+                else:
+                    observed_unchanged.append(existing["id"])
+                    store.touch_conflict_observation(
+                        workspace_id, existing["id"], revision)
             else:
-                observed_unchanged.append(existing["id"])
-                store.touch_conflict_observation(workspace_id,
-                                                 existing["id"], revision)
-        else:
-            # The compared values or evidence changed: supersede the old
-            # record and create a new one (history preserved).
-            if existing["status"] in (ConflictStatus.SUPERSEDED,):
-                to_create.append((draft, dedup_key, fingerprint))
-            else:
+                # Same objects, changed evidence: supersede (history kept).
                 to_supersede.append({"old": existing, "draft": draft,
                                      "dedup_key": dedup_key,
                                      "fingerprint": fingerprint})
+                superseding_ids.add(existing["id"])
+            continue
+        # No draft of the group matches exactly. A changed compared VALUE
+        # means new claim ids and therefore a new dedup key — recognize
+        # the same dispute at the subject level so history supersedes
+        # instead of accumulating parallel conflicts. A DISMISSED subject
+        # match whose facts changed no longer suppresses (spec §25) and a
+        # fresh conflict opens beside it.
+        draft, dedup_key = drafts[0]
+        absorbed += len(drafts) - 1
+        fingerprint = _draft_fingerprint(draft)
+        subject_match = store.find_current_conflict_by_subject(
+            workspace_id, draft.category, draft.subject_key,
+            draft.detector_name, draft.property)
+        if subject_match and subject_match["status"] in (
+                ConflictStatus.OPEN, ConflictStatus.UNDER_REVIEW,
+                ConflictStatus.ACCEPTED_RISK, ConflictStatus.STALE):
+            to_supersede.append({"old": subject_match, "draft": draft,
+                                 "dedup_key": dedup_key,
+                                 "fingerprint": fingerprint})
+            superseding_ids.add(subject_match["id"])
+        else:
+            to_create.append((draft, dedup_key, fingerprint))
 
-    # Reconciliation inputs: current deterministic conflicts NOT re-detected.
+    # Reconciliation inputs: current deterministic conflicts NOT re-detected
+    # this scan (and not about to be superseded by it).
     detected_keys = seen_keys
     stale_candidates = []
     expired_risks = []
     for conflict in store.list_conflicts(workspace_id, limit=1000):
         if conflict["origin"] != ConflictOrigin.DETERMINISTIC:
+            continue
+        if conflict["id"] in superseding_ids:
             continue
         if conflict["status"] in (ConflictStatus.OPEN,
                                   ConflictStatus.UNDER_REVIEW):
@@ -203,7 +244,8 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
         with kg.graph_transaction(
                 workspace_id, action=RevisionAction.CONFLICT_SCAN,
                 actor=actor, summary="deterministic conflict scan") as tx:
-            for draft, dedup_key, fingerprint in to_create:
+            def _new_conflict(draft, dedup_key, fingerprint,
+                              extra_metadata=None):
                 conflict_id = store.insert_conflict_tx(tx, {
                     "category": draft.category,
                     "subject_key": draft.subject_key,
@@ -216,9 +258,11 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
                     "detector_version": draft.detector_version,
                     "dedup_key": dedup_key,
                     "metadata": {**draft.metadata,
+                                 "property": draft.property,
                                  "suppression_fingerprint": fingerprint,
                                  "left_value": draft.left_value,
-                                 "right_value": draft.right_value},
+                                 "right_value": draft.right_value,
+                                 **(extra_metadata or {})},
                     "objects": draft.objects,
                     "evidence": [{**ev,
                                   "quote_hash":
@@ -235,45 +279,21 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
                            "subject_key": draft.subject_key,
                            "severity": draft.severity},
                     source_command="conflict scan")
-                created_ids.append(conflict_id)
+                return conflict_id
+
+            for draft, dedup_key, fingerprint in to_create:
+                created_ids.append(_new_conflict(draft, dedup_key,
+                                                 fingerprint))
             for entry in to_supersede:
                 old = entry["old"]
-                draft = entry["draft"]
-                new_id = store.insert_conflict_tx(tx, {
-                    "category": draft.category,
-                    "subject_key": draft.subject_key,
-                    "title": draft.title,
-                    "description": draft.description,
-                    "severity": draft.severity,
-                    "status": ConflictStatus.OPEN,
-                    "origin": ConflictOrigin.DETERMINISTIC,
-                    "detector_name": draft.detector_name,
-                    "detector_version": draft.detector_version,
-                    "dedup_key": entry["dedup_key"],
-                    "metadata": {**draft.metadata,
-                                 "suppression_fingerprint":
-                                     entry["fingerprint"],
-                                 "left_value": draft.left_value,
-                                 "right_value": draft.right_value,
-                                 "supersedes_conflict_id": old["id"]},
-                    "objects": draft.objects,
-                    "evidence": [{**ev,
-                                  "quote_hash":
-                                      quote_hash(ev.get("quote", ""))}
-                                 for ev in draft.evidence],
-                })
+                new_id = _new_conflict(
+                    entry["draft"], entry["dedup_key"],
+                    entry["fingerprint"],
+                    extra_metadata={"supersedes_conflict_id": old["id"]})
                 store.update_conflict_tx(
                     tx, old["id"], status=ConflictStatus.SUPERSEDED,
                     superseded_by_conflict_id=new_id)
-                store.insert_conflict_decision_tx(
-                    tx, conflict_id=old["id"],
-                    decision=ConflictDecisionType.SUPERSEDE,
-                    actor=actor,
-                    note="compared values or evidence changed",
-                    before_status=old["status"],
-                    after_status=ConflictStatus.SUPERSEDED,
-                    resolution={"superseded_by": new_id})
-                tx.insert_decision(
+                kg_decision = tx.insert_decision(
                     decision_type=DecisionType.CONFLICT_SUPERSEDE,
                     target_kind=DecisionTargetKind.CONFLICT,
                     target_id=old["id"], actor=actor,
@@ -282,20 +302,23 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
                     after={"status": ConflictStatus.SUPERSEDED,
                            "superseded_by": new_id},
                     source_command="conflict scan")
+                store.insert_conflict_decision_tx(
+                    tx, conflict_id=old["id"],
+                    decision=ConflictDecisionType.SUPERSEDE,
+                    actor=actor,
+                    note="compared values or evidence changed",
+                    before_status=old["status"],
+                    after_status=ConflictStatus.SUPERSEDED,
+                    resolution={"superseded_by": new_id},
+                    knowledge_decision_id=kg_decision["id"])
                 superseded_ids.append(old["id"])
                 created_ids.append(new_id)
             for entry in to_reopen:
                 conflict = entry["conflict"]
                 store.update_conflict_tx(tx, conflict["id"],
                                          status=ConflictStatus.OPEN,
-                                         resolved_at=None)
-                store.insert_conflict_decision_tx(
-                    tx, conflict_id=conflict["id"],
-                    decision=ConflictDecisionType.REOPEN, actor=actor,
-                    note=entry["reason"],
-                    before_status=conflict["status"],
-                    after_status=ConflictStatus.OPEN)
-                tx.insert_decision(
+                                         resolved_at=None, stale_at=None)
+                kg_decision = tx.insert_decision(
                     decision_type=DecisionType.CONFLICT_REOPEN,
                     target_kind=DecisionTargetKind.CONFLICT,
                     target_id=conflict["id"], actor=actor,
@@ -303,6 +326,13 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
                     before={"status": conflict["status"]},
                     after={"status": ConflictStatus.OPEN},
                     source_command="conflict scan")
+                store.insert_conflict_decision_tx(
+                    tx, conflict_id=conflict["id"],
+                    decision=ConflictDecisionType.REOPEN, actor=actor,
+                    note=entry["reason"],
+                    before_status=conflict["status"],
+                    after_status=ConflictStatus.OPEN,
+                    knowledge_decision_id=kg_decision["id"])
                 reopened_ids.append(conflict["id"])
             for conflict in stale_candidates:
                 store.update_conflict_tx(tx, conflict["id"],
@@ -320,13 +350,7 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
             for conflict in expired_risks:
                 store.update_conflict_tx(tx, conflict["id"],
                                          status=ConflictStatus.OPEN)
-                store.insert_conflict_decision_tx(
-                    tx, conflict_id=conflict["id"],
-                    decision=ConflictDecisionType.REOPEN, actor=actor,
-                    note="accepted risk expired",
-                    before_status=ConflictStatus.ACCEPTED_RISK,
-                    after_status=ConflictStatus.OPEN)
-                tx.insert_decision(
+                kg_decision = tx.insert_decision(
                     decision_type=DecisionType.CONFLICT_REOPEN,
                     target_kind=DecisionTargetKind.CONFLICT,
                     target_id=conflict["id"], actor=actor,
@@ -334,6 +358,13 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
                     before={"status": ConflictStatus.ACCEPTED_RISK},
                     after={"status": ConflictStatus.OPEN},
                     source_command="conflict scan")
+                store.insert_conflict_decision_tx(
+                    tx, conflict_id=conflict["id"],
+                    decision=ConflictDecisionType.REOPEN, actor=actor,
+                    note="accepted risk expired",
+                    before_status=ConflictStatus.ACCEPTED_RISK,
+                    after_status=ConflictStatus.OPEN,
+                    knowledge_decision_id=kg_decision["id"])
                 reopened_ids.append(conflict["id"])
 
     step("reconciling-conflicts")
@@ -354,6 +385,7 @@ def scan_conflicts(workspace_id: str, *, actor: str = "",
         "staled": staled_ids,
         "observed_unchanged": observed_unchanged,
         "suppressed": suppressed,
+        "absorbed_drafts": absorbed,
         "detector_errors": detector_errors,
     }
 

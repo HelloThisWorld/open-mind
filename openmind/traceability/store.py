@@ -278,13 +278,20 @@ def list_runs(workspace_id: str, *, status: Optional[str] = None,
 
 
 def latest_completed_run(workspace_id: str) -> Optional[Dict[str, Any]]:
-    """The newest run that finished DONE or PARTIAL — the no-op reference."""
+    """The newest completed run — the no-op / incremental reference.
+
+    Ordered by the analyzed Knowledge Revision FIRST: timestamps have
+    one-second resolution, so two runs in the same second would otherwise
+    tie and an arbitrary one would win — and the run that analyzed the
+    highest revision is semantically the right baseline regardless of
+    wall-clock ties."""
     conn, lock = _cx()
     with lock:
         row = conn.execute(
             "SELECT * FROM traceability_runs WHERE workspace_id=? AND "
-            "status IN ('done','partial') ORDER BY created_at DESC, id DESC "
-            "LIMIT 1", (workspace_id,)).fetchone()
+            "status IN ('done','partial') ORDER BY knowledge_revision DESC, "
+            "created_at DESC, id DESC LIMIT 1",
+            (workspace_id,)).fetchone()
     return _run_row(row) if row else None
 
 
@@ -945,6 +952,31 @@ def find_conflict_by_dedup_key(workspace_id: str, dedup_key: str,
     return _conflict_row(row) if row else None
 
 
+def find_current_conflict_by_subject(workspace_id: str, category: str,
+                                     subject_key: str, detector_name: str,
+                                     property_name: str
+                                     ) -> Optional[Dict[str, Any]]:
+    """The newest conflict sharing (category, subject, detector, property)
+    regardless of the exact object ids — the SUPERSESSION identity: a
+    changed compared value produces new claim ids, so the exact dedup key
+    can never match, but the dispute is recognizably the same one."""
+    conn, lock = _cx()
+    with lock:
+        rows = conn.execute(
+            "SELECT * FROM engineering_conflicts WHERE workspace_id=? AND "
+            "category=? AND subject_key=? AND detector_name=? AND "
+            "status != 'superseded' ORDER BY created_at DESC, id DESC "
+            "LIMIT 20",
+            (workspace_id, category, subject_key,
+             detector_name)).fetchall()
+    for row in rows:
+        record = _conflict_row(row)
+        if str((record.get("metadata") or {}).get("property", "")) \
+                == str(property_name or ""):
+            return record
+    return None
+
+
 def find_conflict_by_candidate(workspace_id: str,
                                candidate_id: str) -> Optional[Dict[str, Any]]:
     conn, lock = _cx()
@@ -1070,6 +1102,7 @@ __all__ = [
     "insert_conflict_tx", "update_conflict_tx",
     "insert_conflict_decision_tx", "touch_conflict_observation",
     "get_conflict", "find_conflict_by_dedup_key",
+    "find_current_conflict_by_subject",
     "find_conflict_by_candidate", "list_conflicts", "count_conflicts",
     "list_conflict_decisions", "conflict_evidence", "conflict_objects",
     "clear_workspace_traceability",

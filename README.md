@@ -350,6 +350,81 @@ a Graph UI, Bundle 2.0 freeze/import, and OCR. Full design:
 
 ---
 
+## Formal Traceability & Governed Conflicts (v2 Phase 6)
+
+Phase 6 builds **formal, evidence-backed engineering traceability** and
+**governed conflict management** over the canonical graph. The load-bearing
+distinction: a *generic graph path* is not a *trace*. `graph path` remains
+generic reachability; a formal trace must satisfy a selected **Traceability
+Policy** — every node maps to a policy stage, every edge type is allowed for
+that stage transition, lifecycle and evidence verify, traversal is bounded.
+`possibly-related` never satisfies `implements`, `contains` never satisfies
+`verifies`, and a bare `calls` edge never proves a Requirement is
+implemented. A missing link is never invented — it is returned as a **Gap**,
+which is the governance product.
+
+```bash
+# select a lifecycle (built-ins: generic-engineering, api-service,
+# event-driven-service, batch-processing, japanese-v-model)
+python -m openmind.cli trace policy set --workspace p_... \
+    --policy japanese-v-model --actor reviewer-name \
+    --note "Use the project V-model lifecycle." --json
+
+# rebuild trace paths, gaps and the coverage snapshot (deterministic,
+# provider-free; an unchanged graph is an honest no-op)
+python -m openmind.cli trace refresh --workspace p_... --wait --json
+
+# formal traces (all read-only, policy-validated)
+python -m openmind.cli trace requirement --workspace p_... --requirement ent_... --json
+python -m openmind.cli trace code        --workspace p_... --entity ent_... --json
+python -m openmind.cli trace coverage    --workspace p_... --json
+python -m openmind.cli trace gaps        --workspace p_... --status open --json
+
+# deterministic conflict scan + explicit governance
+python -m openmind.cli conflict scan    --workspace p_... --wait --json
+python -m openmind.cli conflict list    --workspace p_... --status open --json
+python -m openmind.cli conflict promote --workspace p_... --candidate sx_... \
+    --actor reviewer-name --note "Evidence and canonical references verified." --json
+```
+
+- **Traceability is policy-driven, never hardcoded.** Different systems have
+  different lifecycles (an API service, a Japanese V-model, a batch system);
+  the closed declarative policy names root types, stages, allowed relation
+  transitions and rules. Organization policies are schema-validated local
+  files — checksummed, listable even when invalid, never executable.
+- **Coverage is honest.** Every ratio ships
+  `{count, numerator, denominator, percentage}` and a zero denominator gives
+  `percentage: null`, never a fake 0 or 100. Snapshots are historical
+  records — a refresh never overwrites old coverage.
+- **Incremental by construction.** Everything derived is stamped with
+  Knowledge Revision × policy checksum × trace engine version. An unchanged
+  refresh is a no-op; an alias change rebuilds nothing; a changed code
+  entity rebuilds only its upstream Requirements; a policy change rebuilds
+  all. Trace refresh itself never mints a Knowledge Revision.
+- **Conflicts are deterministic comparable-fact detections, not language
+  understanding.** Six detectors compare typed facts (durations with
+  explicit units, retry counts, HTTP method + path, `key=value`
+  configuration, field types, authority-marked values). Units are never
+  guessed — a unitless number is not comparable to `3 seconds`. Arbitrary
+  prose is never compared. A missing test is a Gap, never a Conflict.
+- **Conflict governance is doubly audited.** Every decision (review,
+  accept-risk with expiry, resolve with evidence, dismiss with a suppression
+  fingerprint, reopen) writes the conflict ledger AND the Phase 5 Knowledge
+  Decision ledger in one transaction — one Knowledge Revision each.
+  Resolution never rewrites Claims; an unchanged dismissed conflict is
+  never recreated; changed facts supersede with history preserved. Confirmed
+  Phase 4 Conflict Candidates enter only through explicit
+  `conflict promote`, and only when confirmed + active + verified with all
+  referenced objects resolving canonically.
+
+Deliberately **not** in this phase: Git diff synchronization and branch/PR
+overlays (Phase 7), webhooks, CI merge blocking, automatic conflict
+resolution, automatic promotion, connectors, plugin packaging (Phase 8),
+Neo4j/Cypher/GraphQL, and the Bundle 2.0 schema freeze. Full design:
+[docs/v2/phase-6-traceability-conflicts.md](docs/v2/phase-6-traceability-conflicts.md).
+
+---
+
 ## Built For AI Agent Workflows
 
 Open Mind is designed as infrastructure for practical AI agents and tool
@@ -674,19 +749,30 @@ capabilities are added *beside* them, never in place of one:
 | `get_engineering_entity` | One Entity with aliases, bindings, claims and relations. |
 | `get_engineering_claim` | One Claim with its verified evidence joins. |
 | `get_engineering_relation` | One Relation with state, provenance and evidence. |
+| `trace_requirement` | FORMAL policy-validated requirement trace: paths, stage coverage, gaps. |
+| `trace_code` | Reverse code trace: upstream requirements, downstream tests; honest `untraced`. |
+| `trace_test` | Reverse test trace: verified requirements, implementation targets, evidence. |
+| `get_trace_path` | One persisted trace path with its ordered, validated steps. |
+| `get_traceability_coverage` | The latest coverage snapshot (null percentages on zero denominators). |
+| `list_traceability_gaps` | Missing links as first-class data: missing stages, stale/broken, orphans. |
+| `list_engineering_conflicts` | Governed conflicts with lifecycle status (bounded). |
+| `get_engineering_conflict` | One conflict with objects, verified evidence and its decision history. |
 
-That is 9 core + 4 asset + 6 document + 7 semantic/lens + 9 graph =
-**35 tools**, every addition read-only. There is deliberately **no
-document-write MCP tool** (importing reads a local file, and exposing that
-over MCP would let a client make the server read a path it chose), **no
-semantic-write MCP tool** — nothing on MCP configures a provider, changes a
-workspace's egress policy, triggers a paid analysis, reviews a candidate or
-activates a lens — and **no graph-write MCP tool**: nothing on MCP promotes
-a candidate, creates an Entity/Claim/Relation, merges, splits, changes
-authority, seeds/syncs the graph or exports a bundle. Claude Code drives
-`openmind document add` / `semantic analyze` / `promotion promote` /
-`entity merge` through its shell instead, where the command (and any cloud
-use) is visible.
+That is 9 core + 4 asset + 6 document + 7 semantic/lens + 9 graph +
+8 trace/conflict = **43 tools**, every addition read-only. There is
+deliberately **no document-write MCP tool** (importing reads a local file,
+and exposing that over MCP would let a client make the server read a path it
+chose), **no semantic-write MCP tool** — nothing on MCP configures a
+provider, changes a workspace's egress policy, triggers a paid analysis,
+reviews a candidate or activates a lens — **no graph-write MCP tool**:
+nothing on MCP promotes a candidate, creates an Entity/Claim/Relation,
+merges, splits, changes authority, seeds/syncs the graph or exports a
+bundle — and **no trace/conflict-write MCP tool**: nothing on MCP changes a
+trace policy, refreshes traceability, scans or promotes conflicts, resolves,
+accepts risk or dismisses. Claude Code drives `openmind document add` /
+`semantic analyze` / `promotion promote` / `trace refresh` /
+`conflict resolve` through its shell instead, where the command (and any
+cloud use) is visible.
 
 ---
 
@@ -879,10 +965,17 @@ openmind/
                    Revisions, evidence verifier, promotion, deterministic
                    projector, staleness reconciliation, bounded traversal,
                    exact-first search, vector projection, Bundle 2.0 Draft
+  traceability/    formal traceability + governed conflicts (v2 Phase 6):
+                   closed policy model + validator, five built-in policies,
+                   deterministic trace engine, coverage, gaps, orphans,
+                   incremental refresh snapshots, comparable facts, six
+                   deterministic conflict detectors, conflict lifecycle +
+                   promotion, TraceabilityService
   bundle_verify.py standalone stdlib-only Knowledge Bundle verifier
   migrations/      versioned, checksummed SQLite schema migrations
                    (v0003 = Asset model, v0004 = document ingestion,
-                   v0005 = semantic plane, v0006 = knowledge graph)
+                   v0005 = semantic plane, v0006 = knowledge graph,
+                   v0007 = traceability + conflicts)
   walker.py        selection-aware walk, .gitignore handling, hashing
   detect.py        manifest/language detection and stack cues
   langspec.py      declarative language registry
@@ -1041,7 +1134,7 @@ against the neutral fixture repos in `fixtures/`.
 
 The following are not claimed as complete in the current build:
 
-**v2 enterprise knowledge layer.** Five phases have shipped:
+**v2 enterprise knowledge layer.** Six phases have shipped:
 Phase 1 is the tool-first runtime
 ([docs/v2/phase-1-core-foundation.md](docs/v2/phase-1-core-foundation.md)),
 Phase 2 is the canonical **Asset / Revision / Segment / Evidence** model plus the
@@ -1052,19 +1145,21 @@ is the deterministic **document-ingestion** plane
 Phase 4 is the policy-governed **semantic plane** — evidence-bound
 candidate extraction over local or cloud providers, plus Adaptive Project
 Lenses ([docs/v2/phase-4-semantic-plane.md](docs/v2/phase-4-semantic-plane.md)),
-and Phase 5 is the canonical **Engineering Knowledge Graph** — deterministic
+Phase 5 is the canonical **Engineering Knowledge Graph** — deterministic
 projection, explicit candidate promotion, Knowledge Revisions, Human
 Decisions, graph search/traversal and the Knowledge Bundle 2.0 **Draft**
-([docs/v2/phase-5-knowledge-graph.md](docs/v2/phase-5-knowledge-graph.md)).
+([docs/v2/phase-5-knowledge-graph.md](docs/v2/phase-5-knowledge-graph.md)),
+and Phase 6 is **formal Requirement Traceability and governed Conflict
+management** — policy-driven trace paths, coverage/gap/orphan reports,
+deterministic comparable-fact conflict detection, explicit Conflict
+Candidate promotion and a fully audited conflict lifecycle
+([docs/v2/phase-6-traceability-conflicts.md](docs/v2/phase-6-traceability-conflicts.md)).
 The following later-phase items are **not** implemented; the foundation creates
 extension points for them rather than building them:
 
-- formal Requirement-to-Code **traceability**, coverage/gap reports and the
-  conflict-resolution engine (Phase 6 — the generic `graph path` command is
-  deliberately not labelled traceability, and Phase 4 conflict **candidates**
-  stay candidates);
-- change-impact analysis, branch/PR overlays, webhooks and graph-based CI
-  policy gates;
+- Git diff synchronization, change-impact analysis, branch/PR overlays,
+  webhooks and graph-based CI policy gates (Phase 7 — Phase 6 traceability
+  is graph-state analysis, not Git change-impact analysis);
 - **OCR** — image-only PDFs are *detected* and marked `needs-ocr`, never read;
 - COBOL, JCL, PPTX and email-archive parsing; Jira and Confluence connectors;
 - cloud **embeddings** and native provider batch APIs (semantic *reasoning*
@@ -1072,7 +1167,9 @@ extension points for them rather than building them:
   ingestion remain fully local);
 - historical (non-current-revision) document search;
 - the Bundle 2.0 schema **freeze** and Bundle import (the Draft exporter and
-  verifier shipped in Phase 5; `.openmind` export stays at schema 1.x);
+  verifier shipped in Phase 5 and were extended to `2.0.0-draft.2` with
+  opt-in traceability/conflict files in Phase 6; `.openmind` export stays at
+  schema 1.x);
 - a typed worker pool or job DAG replacing the current single-worker engine;
 - new Agent Skills and Skill Forge / Verification integration (Phase 8).
 

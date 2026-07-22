@@ -431,10 +431,12 @@ class TraceabilityService:
                    note: str, expires_at: str = "",
                    source_command: str = "") -> Dict[str, Any]:
         self._require_workspace(workspace_id)
+        # The expiry is OVERWRITTEN every time (empty = no expiry): a
+        # re-acceptance without an expiry must not inherit a stale one.
         metadata: Dict[str, Any] = {"accepted_by": actor,
-                                    "accepted_at": _now()}
-        if expires_at:
-            metadata["acceptance_expires_at"] = str(expires_at)
+                                    "accepted_at": _now(),
+                                    "acceptance_expires_at":
+                                        str(expires_at or "")}
         return self._gap_governance(
             workspace_id, gap_id, decision_type=DecisionType.GAP_ACCEPT,
             new_status=GapStatus.ACCEPTED, actor=actor, note=note,
