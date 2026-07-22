@@ -200,7 +200,7 @@ code, out, _ = run_cli("bundle", "export", "--workspace", pid, "--output",
                        "2026-07-22T00:00:00", "--json")
 manifest = json.loads(out)["manifest"]
 check("bundle export over the CLI",
-      code == 0 and manifest["bundleSchemaVersion"] == "2.0.0-draft.1")
+      code == 0 and manifest["bundleSchemaVersion"] == "2.0.0-draft.2")
 from openmind.bundle_verify import main as verify_main  # noqa: E402
 stdout = io.StringIO()
 with contextlib.redirect_stdout(stdout), \

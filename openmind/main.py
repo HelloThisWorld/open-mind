@@ -926,6 +926,268 @@ def relation_promotion_promote(project_id: str,
         note=req.note, source_command="rest:POST /relation-promotions")
 
 
+# ---------------------------------------------------------------------------
+# Formal Traceability + governed Conflicts (OpenMind v2 Phase 6) — ADDITIVE
+# routes only.
+#
+# Workspace-scoped through the service layer, bounded, typed: there is
+# deliberately NO generic trace or conflict mutation endpoint — every write
+# is one explicit operation with a caller-supplied actor. Nothing here can
+# reach a semantic provider. `/projects` naming is kept.
+# ---------------------------------------------------------------------------
+@app.get("/projects/{project_id}/traceability/policies")
+def trace_policies(project_id: str) -> Dict[str, Any]:
+    return _svc().traceability.list_policies(project_id)
+
+
+@app.get("/projects/{project_id}/traceability/policy")
+def trace_policy(project_id: str,
+                 name: Optional[str] = None) -> Dict[str, Any]:
+    return _svc().traceability.get_policy(project_id, name)
+
+
+@app.post("/projects/{project_id}/traceability/policy")
+def trace_policy_set(project_id: str,
+                     req: models.TracePolicySetReq) -> Dict[str, Any]:
+    return _svc().traceability.set_workspace_policy(
+        project_id, policy_name=req.policy_name, actor=req.actor,
+        note=req.note, source_command="rest:POST /traceability/policy")
+
+
+@app.post("/projects/{project_id}/traceability/policy/validate")
+def trace_policy_validate(project_id: str,
+                          req: models.TracePolicyValidateReq
+                          ) -> Dict[str, Any]:
+    return _svc().traceability.validate_policy(project_id, req.document)
+
+
+@app.post("/projects/{project_id}/traceability/refresh-plan")
+def trace_refresh_plan(project_id: str,
+                       req: models.TraceRefreshReq) -> Dict[str, Any]:
+    return _svc().traceability.plan_refresh(
+        project_id, scope=req.scope or None, force=req.force)
+
+
+@app.post("/projects/{project_id}/traceability/refresh")
+def trace_refresh(project_id: str,
+                  req: models.TraceRefreshReq) -> Dict[str, Any]:
+    return _svc().traceability.refresh(
+        project_id, scope=req.scope or None, force=req.force,
+        wait=req.wait)
+
+
+@app.get("/projects/{project_id}/traceability/runs")
+def trace_runs(project_id: str, status: Optional[str] = None,
+               limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    return _svc().traceability.list_runs(project_id, status=status,
+                                         limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/traceability/runs/{run_id}")
+def trace_run(project_id: str, run_id: str) -> Dict[str, Any]:
+    return {"run": _svc().traceability.get_run(project_id, run_id)}
+
+
+@app.get("/projects/{project_id}/traceability/requirements/{entity_id}")
+def trace_requirement_route(project_id: str, entity_id: str,
+                            include_stale: bool = False,
+                            max_paths: int = 10) -> Dict[str, Any]:
+    return _svc().traceability.trace_requirement(
+        project_id, entity_id, include_stale=include_stale,
+        max_paths=max_paths)
+
+
+@app.get("/projects/{project_id}/traceability/code/{entity_id}")
+def trace_code_route(project_id: str, entity_id: str,
+                     include_stale: bool = False) -> Dict[str, Any]:
+    return _svc().traceability.trace_code(project_id, entity_id,
+                                          include_stale=include_stale)
+
+
+@app.get("/projects/{project_id}/traceability/tests/{entity_id}")
+def trace_test_route(project_id: str, entity_id: str,
+                     include_stale: bool = False) -> Dict[str, Any]:
+    return _svc().traceability.trace_test(project_id, entity_id,
+                                          include_stale=include_stale)
+
+
+@app.get("/projects/{project_id}/traceability/paths/{trace_id}")
+def trace_path_route(project_id: str, trace_id: str) -> Dict[str, Any]:
+    return {"path": _svc().traceability.get_trace_path(project_id,
+                                                       trace_id)}
+
+
+@app.get("/projects/{project_id}/traceability/coverage")
+def trace_coverage(project_id: str) -> Dict[str, Any]:
+    return _svc().traceability.get_coverage(project_id)
+
+
+@app.get("/projects/{project_id}/traceability/gaps")
+def trace_gaps(project_id: str, gap_type: Optional[str] = None,
+               status: Optional[str] = None,
+               root_entity_id: Optional[str] = None,
+               severity: Optional[str] = None,
+               limit: int = 200, offset: int = 0) -> Dict[str, Any]:
+    return _svc().traceability.list_gaps(
+        project_id, gap_type=gap_type, status=status,
+        root_entity_id=root_entity_id, severity=severity, limit=limit,
+        offset=offset)
+
+
+@app.get("/projects/{project_id}/traceability/gaps/{gap_id}")
+def trace_gap(project_id: str, gap_id: str) -> Dict[str, Any]:
+    return {"gap": _svc().traceability.get_gap(project_id, gap_id)}
+
+
+@app.post("/projects/{project_id}/traceability/gaps/{gap_id}/resolve")
+def trace_gap_resolve(project_id: str, gap_id: str,
+                      req: models.GapGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.resolve_gap(
+        project_id, gap_id, actor=req.actor, note=req.note,
+        engine_exception=req.engine_exception,
+        source_command="rest:POST /traceability/gaps/resolve")
+
+
+@app.post("/projects/{project_id}/traceability/gaps/{gap_id}/accept")
+def trace_gap_accept(project_id: str, gap_id: str,
+                     req: models.GapGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.accept_gap(
+        project_id, gap_id, actor=req.actor, note=req.note,
+        expires_at=req.expires_at,
+        source_command="rest:POST /traceability/gaps/accept")
+
+
+@app.post("/projects/{project_id}/traceability/gaps/{gap_id}/dismiss")
+def trace_gap_dismiss(project_id: str, gap_id: str,
+                      req: models.GapGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.dismiss_gap(
+        project_id, gap_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /traceability/gaps/dismiss")
+
+
+@app.post("/projects/{project_id}/traceability/gaps/{gap_id}/reopen")
+def trace_gap_reopen(project_id: str, gap_id: str,
+                     req: models.GapGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.reopen_gap(
+        project_id, gap_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /traceability/gaps/reopen")
+
+
+@app.get("/projects/{project_id}/traceability/orphans/requirements")
+def trace_orphan_requirements(project_id: str,
+                              limit: int = 500) -> Dict[str, Any]:
+    return _svc().traceability.find_orphan_requirements(project_id,
+                                                        limit=limit)
+
+
+@app.get("/projects/{project_id}/traceability/orphans/code")
+def trace_orphan_code(project_id: str, limit: int = 500) -> Dict[str, Any]:
+    return _svc().traceability.find_orphan_code(project_id, limit=limit)
+
+
+@app.get("/projects/{project_id}/traceability/orphans/tests")
+def trace_orphan_tests(project_id: str,
+                       limit: int = 500) -> Dict[str, Any]:
+    return _svc().traceability.find_orphan_tests(project_id, limit=limit)
+
+
+@app.get("/projects/{project_id}/traceability/orphans/documents")
+def trace_orphan_documents(project_id: str,
+                           limit: int = 500) -> Dict[str, Any]:
+    return _svc().traceability.find_orphan_documents(project_id,
+                                                     limit=limit)
+
+
+@app.post("/projects/{project_id}/conflicts/scan-plan")
+def conflict_scan_plan(project_id: str) -> Dict[str, Any]:
+    return _svc().traceability.plan_conflict_scan(project_id)
+
+
+@app.post("/projects/{project_id}/conflicts/scan")
+def conflict_scan(project_id: str,
+                  req: models.ConflictScanReq) -> Dict[str, Any]:
+    return _svc().traceability.scan_conflicts(project_id, actor=req.actor,
+                                              wait=req.wait)
+
+
+@app.get("/projects/{project_id}/conflicts")
+def conflicts_list(project_id: str, status: Optional[str] = None,
+                   category: Optional[str] = None,
+                   origin: Optional[str] = None,
+                   severity: Optional[str] = None,
+                   limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    """Canonical governed conflicts. The Phase 4 candidate listing stays at
+    GET /projects/{id}/semantic/conflicts, untouched."""
+    return _svc().traceability.list_conflicts(
+        project_id, status=status, category=category, origin=origin,
+        severity=severity, limit=limit, offset=offset)
+
+
+@app.get("/projects/{project_id}/conflicts/{conflict_id}")
+def conflict_show(project_id: str, conflict_id: str) -> Dict[str, Any]:
+    return {"conflict": _svc().traceability.get_conflict(project_id,
+                                                         conflict_id)}
+
+
+@app.post("/projects/{project_id}/conflict-promotions/plan")
+def conflict_promotion_plan(project_id: str,
+                            req: models.ConflictPromotionPlanReq
+                            ) -> Dict[str, Any]:
+    return {"plan": _svc().traceability.plan_conflict_promotion(
+        project_id, req.candidate_id)}
+
+
+@app.post("/projects/{project_id}/conflict-promotions")
+def conflict_promotion(project_id: str,
+                       req: models.ConflictPromotionReq) -> Dict[str, Any]:
+    return _svc().traceability.promote_conflict_candidate(
+        project_id, req.candidate_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /conflict-promotions")
+
+
+@app.post("/projects/{project_id}/conflicts/{conflict_id}/review")
+def conflict_review(project_id: str, conflict_id: str,
+                    req: models.ConflictGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.start_conflict_review(
+        project_id, conflict_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /conflicts/review")
+
+
+@app.post("/projects/{project_id}/conflicts/{conflict_id}/accept-risk")
+def conflict_accept_risk(project_id: str, conflict_id: str,
+                         req: models.ConflictGovernanceReq
+                         ) -> Dict[str, Any]:
+    return _svc().traceability.accept_conflict_risk(
+        project_id, conflict_id, actor=req.actor, note=req.note,
+        expires_at=req.expires_at, follow_up=req.follow_up,
+        source_command="rest:POST /conflicts/accept-risk")
+
+
+@app.post("/projects/{project_id}/conflicts/{conflict_id}/resolve")
+def conflict_resolve(project_id: str, conflict_id: str,
+                     req: models.ConflictGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.resolve_conflict(
+        project_id, conflict_id, actor=req.actor, note=req.note,
+        resolution_type=req.resolution_type, evidence=req.evidence,
+        source_command="rest:POST /conflicts/resolve")
+
+
+@app.post("/projects/{project_id}/conflicts/{conflict_id}/dismiss")
+def conflict_dismiss(project_id: str, conflict_id: str,
+                     req: models.ConflictGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.dismiss_conflict(
+        project_id, conflict_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /conflicts/dismiss")
+
+
+@app.post("/projects/{project_id}/conflicts/{conflict_id}/reopen")
+def conflict_reopen(project_id: str, conflict_id: str,
+                    req: models.ConflictGovernanceReq) -> Dict[str, Any]:
+    return _svc().traceability.reopen_conflict(
+        project_id, conflict_id, actor=req.actor, note=req.note,
+        source_command="rest:POST /conflicts/reopen")
+
+
 def _reject_conflicting_targets(req: models.DocumentImportReq) -> None:
     """``asset`` / ``logical_key`` / ``new_asset`` name three different targets
     for one set of bytes; combining them has no single correct meaning, so it is

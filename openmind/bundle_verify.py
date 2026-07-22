@@ -52,6 +52,17 @@ _JSONL_FILES = (
     "decisions.jsonl", "knowledge-revisions.jsonl", "lenses.jsonl",
 )
 
+#: Phase 6 opt-in files, present only when the manifest mode flags say so.
+_TRACE_FILES = (
+    "traceability-policies.jsonl", "traceability-runs.jsonl",
+    "trace-paths.jsonl", "trace-path-steps.jsonl", "trace-gaps.jsonl",
+    "coverage-snapshots.jsonl",
+)
+_CONFLICT_FILES = (
+    "conflicts.jsonl", "conflict-objects.jsonl", "conflict-evidence.jsonl",
+    "conflict-decisions.jsonl",
+)
+
 
 class Report:
     def __init__(self) -> None:
@@ -267,7 +278,150 @@ def verify_bundle(directory: str) -> Report:
         if key in counts and int(counts[key]) != actual:
             report.error(f"manifest counts.{key} = {counts[key]} but file "
                          f"has {actual} records")
+
+    # -- Phase 6: traceability + conflicts (opt-in files) --------------------
+    mode = manifest.get("mode") or {}
+    current_only = bool(mode.get("currentOnly"))
+    if mode.get("includeTraceability"):
+        _verify_traceability(root, report, files, entity_ids, relation_ids,
+                             current_only)
+    if mode.get("includeConflicts"):
+        _verify_conflicts(root, report, files, entity_ids, claim_ids,
+                          relation_ids, evidence_ids)
     return report
+
+
+def _verify_traceability(root: Path, report: Report,
+                         files: Dict[str, Any], entity_ids: set,
+                         relation_ids: set, current_only: bool) -> None:
+    for name in _TRACE_FILES:
+        if name not in files:
+            report.error(f"manifest declares includeTraceability but is "
+                         f"missing file entry: {name}")
+    data = {name: _read_jsonl(root / name, report)
+            for name in _TRACE_FILES}
+    for name in ("traceability-runs.jsonl", "trace-paths.jsonl",
+                 "trace-gaps.jsonl", "coverage-snapshots.jsonl"):
+        _check_unique_ids(name, data[name], report)
+    for name in _TRACE_FILES:
+        _scan_paths(name, data[name], report)
+
+    paths = data["trace-paths.jsonl"]
+    steps = data["trace-path-steps.jsonl"]
+    path_ids = {p.get("id") for p in paths}
+
+    # Trace root/target entities and step relations must exist.
+    for path in paths:
+        if path.get("root_entity_id") not in entity_ids:
+            report.error(f"trace-paths: {path.get('id')} references "
+                         f"missing root entity "
+                         f"{path.get('root_entity_id')}")
+        target = path.get("target_entity_id")
+        if target and target not in entity_ids:
+            report.error(f"trace-paths: {path.get('id')} references "
+                         f"missing target entity {target}")
+        if not path.get("policy_checksum"):
+            report.error(f"trace-paths: {path.get('id')} has no policy "
+                         f"checksum")
+    steps_by_path: Dict[Any, List[int]] = {}
+    for step in steps:
+        path_id = step.get("trace_path_id")
+        if path_id not in path_ids:
+            report.error(f"trace-path-steps: {step.get('id')} references "
+                         f"missing path {path_id}")
+            continue
+        steps_by_path.setdefault(path_id, []).append(
+            int(step.get("ordinal") or 0))
+        if step.get("node_kind") == "entity" and \
+                step.get("node_id") not in entity_ids:
+            report.error(f"trace-path-steps: {step.get('id')} references "
+                         f"missing entity {step.get('node_id')}")
+        relation_id = step.get("relation_id")
+        if relation_id and relation_id not in relation_ids:
+            report.error(f"trace-path-steps: {step.get('id')} references "
+                         f"missing relation {relation_id}")
+    for path_id, ordinals in sorted(steps_by_path.items(),
+                                    key=lambda kv: str(kv[0])):
+        if sorted(ordinals) != list(range(1, len(ordinals) + 1)):
+            report.error(f"trace-path-steps: path {path_id} steps are not "
+                         f"densely ordered 1..n (got {sorted(ordinals)})")
+
+    for gap in data["trace-gaps.jsonl"]:
+        gap_root = gap.get("root_entity_id")
+        if gap_root and gap_root not in entity_ids:
+            report.error(f"trace-gaps: {gap.get('id')} references missing "
+                         f"root entity {gap_root}")
+        if not gap.get("policy_checksum"):
+            report.error(f"trace-gaps: {gap.get('id')} has no policy "
+                         f"checksum")
+
+    for snapshot in data["coverage-snapshots.jsonl"]:
+        if not snapshot.get("policy_checksum"):
+            report.error(f"coverage-snapshots: {snapshot.get('id')} has no "
+                         f"policy checksum")
+        if current_only and snapshot.get("stale_at"):
+            report.error(f"coverage-snapshots: current-only export "
+                         f"contains stale snapshot {snapshot.get('id')}")
+        metrics = (snapshot.get("metrics") or {}).get("requirements") or {}
+        for key, ratio in sorted(metrics.items()):
+            if not isinstance(ratio, dict) or "numerator" not in ratio:
+                continue
+            numerator = ratio.get("numerator")
+            denominator = ratio.get("denominator")
+            percentage = ratio.get("percentage")
+            if denominator == 0 and percentage is not None:
+                report.error(
+                    f"coverage-snapshots: {snapshot.get('id')} "
+                    f"{key}: zero denominator must have null percentage")
+            if denominator and percentage is not None:
+                expected = round(100.0 * numerator / denominator, 2)
+                if abs(percentage - expected) > 0.01:
+                    report.error(
+                        f"coverage-snapshots: {snapshot.get('id')} {key}: "
+                        f"percentage {percentage} does not match "
+                        f"{numerator}/{denominator}")
+
+
+def _verify_conflicts(root: Path, report: Report, files: Dict[str, Any],
+                      entity_ids: set, claim_ids: set, relation_ids: set,
+                      evidence_ids: set) -> None:
+    for name in _CONFLICT_FILES:
+        if name not in files:
+            report.error(f"manifest declares includeConflicts but is "
+                         f"missing file entry: {name}")
+    data = {name: _read_jsonl(root / name, report)
+            for name in _CONFLICT_FILES}
+    _check_unique_ids("conflicts.jsonl", data["conflicts.jsonl"], report)
+    _check_unique_ids("conflict-decisions.jsonl",
+                      data["conflict-decisions.jsonl"], report)
+    for name in _CONFLICT_FILES:
+        _scan_paths(name, data[name], report)
+
+    conflicts = data["conflicts.jsonl"]
+    conflict_ids = {c.get("id") for c in conflicts}
+    by_kind = {"entity": entity_ids, "claim": claim_ids,
+               "relation": relation_ids}
+    for obj in data["conflict-objects.jsonl"]:
+        if obj.get("conflict_id") not in conflict_ids:
+            report.error(f"conflict-objects: join references missing "
+                         f"conflict {obj.get('conflict_id')}")
+        known = by_kind.get(obj.get("object_kind"))
+        if known is not None and obj.get("object_id") not in known:
+            report.error(f"conflict-objects: conflict "
+                         f"{obj.get('conflict_id')} references missing "
+                         f"{obj.get('object_kind')} {obj.get('object_id')}")
+    for join in data["conflict-evidence.jsonl"]:
+        if join.get("conflict_id") not in conflict_ids:
+            report.error(f"conflict-evidence: join references missing "
+                         f"conflict {join.get('conflict_id')}")
+        if join.get("evidence_id") not in evidence_ids:
+            report.error(f"conflict-evidence: join references missing "
+                         f"evidence {join.get('evidence_id')}")
+    for decision in data["conflict-decisions.jsonl"]:
+        if decision.get("conflict_id") not in conflict_ids:
+            report.error(f"conflict-decisions: {decision.get('id')} "
+                         f"references missing conflict "
+                         f"{decision.get('conflict_id')}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

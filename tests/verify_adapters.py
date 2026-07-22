@@ -295,9 +295,17 @@ KNOWLEDGE_TOOLS = ("get_graph_stats", "search_graph", "get_graph_node",
                    "get_engineering_claim", "get_engineering_relation")
 check("the nine read-only graph tools are registered additively",
       set(KNOWLEDGE_TOOLS) <= set(registered), str(registered))
+# v2 Phase 6 adds eight read-only traceability/conflict tools the same way.
+TRACE_TOOLS = ("trace_requirement", "trace_code", "trace_test",
+               "get_trace_path", "get_traceability_coverage",
+               "list_traceability_gaps", "list_engineering_conflicts",
+               "get_engineering_conflict")
+check("the eight read-only trace/conflict tools are registered additively",
+      set(TRACE_TOOLS) <= set(registered), str(registered))
 check("every registered tool is an accounted-for addition",
       set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS)
-      | set(DOCUMENT_TOOLS) | set(SEMANTIC_TOOLS) | set(KNOWLEDGE_TOOLS),
+      | set(DOCUMENT_TOOLS) | set(SEMANTIC_TOOLS) | set(KNOWLEDGE_TOOLS)
+      | set(TRACE_TOOLS),
       str(registered))
 
 descriptions = {t.name: (t.description or "") for t in asyncio.run(server.list_tools())}

@@ -49,7 +49,7 @@ check("EXACTLY the nine graph tools are added",
 total = (len(mcp_server.TOOLS) + len(mcp_server.ASSET_TOOLS)
          + len(mcp_server.DOCUMENT_TOOLS) + len(mcp_server.SEMANTIC_TOOLS)
          + len(mcp_server.KNOWLEDGE_TOOLS))
-check("the complete MCP set is 35 tools", total == 35)
+check("the Phase 1-5 MCP set is 35 tools", total == 35)
 forbidden = {"promote_candidate", "promote_relation", "create_entity",
              "create_claim", "create_relation", "merge_entities",
              "split_entity", "set_authority", "seed_graph", "sync_graph",
@@ -64,7 +64,11 @@ check("no promote/create/merge/authority/seed/export tool exists on MCP",
 import asyncio  # noqa: E402
 server = mcp_server.create_mcp_server()
 registered = asyncio.new_event_loop().run_until_complete(server.list_tools())
-check("FastMCP registers all 35", len(registered) == 35)
+# Phase 6 registers eight additive read-only trace/conflict tools beside
+# these 35; verify_traceability_adapters accounts for each by name.
+check("FastMCP registers the 35 Phase 1-5 tools (43 with the trace set)",
+      len(registered) == 35 + len(mcp_server.TRACE_TOOLS)
+      and len(mcp_server.TRACE_TOOLS) == 8)
 
 # ---------------------------------------------------------------------------
 # 2. REST: legacy + Phase 3/4 routes intact; knowledge routes additive

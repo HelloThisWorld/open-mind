@@ -583,24 +583,136 @@ Added beside the Phase 3 `knowledge search` (which is unchanged). The ledger
 is per-workspace, monotonic and immutable; one graph transaction = one
 revision, and a failed transaction leaves none.
 
-### `bundle export` — Knowledge Bundle 2.0 Draft (v2 Phase 5)
+### `trace` — formal Requirement Traceability (v2 Phase 6)
+
+Formal, policy-driven traceability over the canonical graph. The generic
+`graph path` command stays generic reachability; a formal trace must satisfy
+the workspace's selected **Traceability Policy** (stages, allowed relation
+transitions, evidence rules). `possibly-related` never satisfies
+`implements`, `calls` alone never proves a Requirement, and a missing link
+is returned as a **Gap**, never invented. Everything here is deterministic —
+no command in this group can reach a semantic provider.
+
+```bash
+# policies: 5 built-ins + organization files (schema-validated, checksummed,
+# listable even when invalid, never executable)
+python -m openmind.cli trace policy list     --workspace p_... --json
+python -m openmind.cli trace policy show     --workspace p_... --json
+python -m openmind.cli trace policy validate --workspace p_... --file team.yaml --json
+python -m openmind.cli trace policy set \
+    --workspace p_... \
+    --policy japanese-v-model \
+    --actor reviewer-name \
+    --note "Use the project V-model lifecycle." \
+    --json
+
+# refresh: rebuild paths, gaps, orphan sets and the coverage snapshot.
+# Tied to Knowledge Revision x policy checksum x engine version: an
+# unchanged graph is an honest no-op; --force overrides; --requirement
+# scopes to one root. Refresh itself never mints a Knowledge Revision.
+python -m openmind.cli trace refresh-plan --workspace p_... --json
+python -m openmind.cli trace refresh      --workspace p_... --wait --json
+python -m openmind.cli trace runs         --workspace p_... --json
+python -m openmind.cli trace run          --workspace p_... --run trun_... --json
+
+# traces (read-only, policy-validated, bounded, deterministic ordering)
+python -m openmind.cli trace requirement --workspace p_... --requirement ent_... --json
+python -m openmind.cli trace code        --workspace p_... --entity ent_... --json
+python -m openmind.cli trace test        --workspace p_... --entity ent_... --json
+python -m openmind.cli trace path        --workspace p_... --trace tr_... --json
+
+# coverage: honest ratios ({count, numerator, denominator, percentage};
+# a zero denominator gives percentage null, never a fake 0/100), stage-level
+# metrics and a policy-driven status. Snapshots are history, never
+# overwritten.
+python -m openmind.cli trace coverage --workspace p_... --json
+
+# gaps: first-class missing links with policy-driven severities.
+# Governance: accept (optional expiry; expired acceptance reopens),
+# dismiss (suppression fingerprint), reopen, and explicit resolve — which
+# is REFUSED while the engine still detects the gap unless a documented
+# --engine-exception is supplied.
+python -m openmind.cli trace gaps        --workspace p_... --status open --json
+python -m openmind.cli trace gap-show    --workspace p_... --gap tg_... --json
+python -m openmind.cli trace gap-accept  --workspace p_... --gap tg_... \
+    --actor reviewer-name --note "Framework utility; intentional." --json
+python -m openmind.cli trace gap-dismiss --workspace p_... --gap tg_... \
+    --actor reviewer-name --note "Detector false positive." --json
+python -m openmind.cli trace gap-reopen  --workspace p_... --gap tg_... \
+    --actor reviewer-name --note "Reconsidering." --json
+
+# orphans: explicit queries; untraced is a classification, never "invalid"
+python -m openmind.cli trace orphans-requirements --workspace p_... --json
+python -m openmind.cli trace orphans-code         --workspace p_... --json
+python -m openmind.cli trace orphans-tests        --workspace p_... --json
+python -m openmind.cli trace orphans-documents    --workspace p_... --json
+```
+
+### `conflict` — governed engineering conflicts (v2 Phase 6)
+
+Deterministic comparable-fact conflict detection (never free-prose
+contradiction guessing) plus a fully audited lifecycle. Six detectors
+compare typed facts: durations with explicit units, retry counts, HTTP
+method + path, `key=value` configuration, field data types,
+authority-marked values. Units are never guessed; non-comparable facts are
+silence, not conflicts; a missing test is a Gap, not a Conflict.
+
+```bash
+python -m openmind.cli conflict scan-plan --workspace p_... --json
+python -m openmind.cli conflict scan      --workspace p_... --wait --json
+python -m openmind.cli conflict list      --workspace p_... --status open --json
+python -m openmind.cli conflict show      --workspace p_... --conflict ecf_... --json
+
+# explicit promotion of a CONFIRMED + active + verified Phase 4 conflict
+# candidate whose referenced objects resolve canonically (idempotent; one
+# Knowledge Revision; the candidate row survives)
+python -m openmind.cli conflict promotion-plan --workspace p_... --candidate sx_... --json
+python -m openmind.cli conflict promote        --workspace p_... --candidate sx_... \
+    --actor reviewer-name --note "Evidence and compared objects verified." --json
+
+# lifecycle: every action needs --actor and --note, writes the conflict
+# decision ledger AND the Phase 5 Knowledge Decision ledger, and mints one
+# Knowledge Revision. Resolution never rewrites Claims; an identical
+# re-detection after resolution deterministically reopens; a dismissed
+# conflict is suppressed until its underlying facts change.
+python -m openmind.cli conflict review      --workspace p_... --conflict ecf_... \
+    --actor reviewer-name --note "Taking a look." --json
+python -m openmind.cli conflict accept-risk --workspace p_... --conflict ecf_... \
+    --actor reviewer-name --note "Tolerable until v2." \
+    --expires 2026-12-31T00:00:00 --json
+python -m openmind.cli conflict resolve     --workspace p_... --conflict ecf_... \
+    --resolution left-correct --evidence ev_... \
+    --actor reviewer-name --note "The 2s value is the governed one." --json
+python -m openmind.cli conflict dismiss     --workspace p_... --conflict ecf_... \
+    --actor reviewer-name --note "Detector false positive." --json
+python -m openmind.cli conflict reopen      --workspace p_... --conflict ecf_... \
+    --actor reviewer-name --note "Not actually tolerable." --json
+```
+
+### `bundle export` — Knowledge Bundle 2.0 Draft (v2 Phase 5, extended in Phase 6)
 
 ```bash
 python -m openmind.cli bundle export --workspace p_... --output ./.openmind-v2 \
     --current-only --json
 python -m openmind.cli bundle export --workspace p_... --output ./.openmind-v2 \
-    --include-history --json
+    --include-history --include-traceability --include-conflicts --json
 python -m openmind.bundle_verify ./.openmind-v2
 ```
 
 A SEPARATE contract from the frozen `.openmind` 1.1.0 artifact: schema
-`2.0.0-draft.1`, its own directory of deterministic JSONL files + JSON
-schemas + a manifest with per-file SHA-256 hashes and record counts. No
-secrets, no provider profiles, no prompts, no raw model output, no absolute
-paths. `--knowledge-revision N` filters records by their creation revision
-stamp (documented as such — it does not reconstruct point-in-time lifecycle
-states). `python -m openmind.bundle_verify` is a standalone stdlib-only
-verifier any consumer can run.
+`2.0.0-draft.2` (still a draft — no freeze), its own directory of
+deterministic JSONL files + JSON schemas + a manifest with per-file SHA-256
+hashes and record counts. No secrets, no provider profiles, no prompts, no
+raw model output, no absolute paths. `--knowledge-revision N` filters
+records by their creation revision stamp (documented as such — it does not
+reconstruct point-in-time lifecycle states). `--include-traceability` adds
+trace policies/runs/paths/steps/gaps/coverage snapshots and
+`--include-conflicts` adds conflicts with their object/evidence/decision
+joins; a current-only export carries the latest non-stale snapshot, current
+paths/gaps and open/under-review/accepted-risk conflicts.
+`python -m openmind.bundle_verify` is a standalone stdlib-only verifier any
+consumer can run — it also checks trace referential integrity, step
+ordering and coverage arithmetic.
 
 ### `export`
 

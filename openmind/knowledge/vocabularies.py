@@ -250,7 +250,14 @@ class ClaimEvidenceRole:
 
 
 class DecisionType:
-    """Every governance write records exactly one of these."""
+    """Every governance write records exactly one of these.
+
+    The ``CONFLICT_*``, ``GAP_*`` and ``TRACE_POLICY_CHANGE`` members were
+    added in Phase 6 (additively — nothing existing renamed): conflict and
+    gap governance and traceability-policy selection are canonical
+    governance actions and must be auditable in the same ledger as every
+    other graph decision.
+    """
     PROMOTE_CANDIDATE = "promote-candidate"
     PROMOTE_RELATION = "promote-relation"
     CREATE_ENTITY = "create-entity"
@@ -266,11 +273,29 @@ class DecisionType:
     WITHDRAW = "withdraw"
     REJECT_RELATION = "reject-relation"
     RESTORE_RELATION = "restore-relation"
+    CONFLICT_DETECT = "conflict-detect"
+    CONFLICT_PROMOTE = "conflict-promote"
+    CONFLICT_REVIEW = "conflict-review"
+    CONFLICT_ACCEPT_RISK = "conflict-accept-risk"
+    CONFLICT_RESOLVE = "conflict-resolve"
+    CONFLICT_DISMISS = "conflict-dismiss"
+    CONFLICT_REOPEN = "conflict-reopen"
+    CONFLICT_SUPERSEDE = "conflict-supersede"
+    GAP_RESOLVE = "gap-resolve"
+    GAP_ACCEPT = "gap-accept"
+    GAP_DISMISS = "gap-dismiss"
+    GAP_REOPEN = "gap-reopen"
+    TRACE_POLICY_CHANGE = "trace-policy-change"
     VALUES = frozenset({
         PROMOTE_CANDIDATE, PROMOTE_RELATION, CREATE_ENTITY, CREATE_CLAIM,
         CREATE_RELATION, ADD_ALIAS, REMOVE_ALIAS, MERGE_ENTITY, SPLIT_ENTITY,
         MARK_AUTHORITATIVE, MARK_NON_AUTHORITATIVE, SUPERSEDE, WITHDRAW,
         REJECT_RELATION, RESTORE_RELATION,
+        CONFLICT_DETECT, CONFLICT_PROMOTE, CONFLICT_REVIEW,
+        CONFLICT_ACCEPT_RISK, CONFLICT_RESOLVE, CONFLICT_DISMISS,
+        CONFLICT_REOPEN, CONFLICT_SUPERSEDE,
+        GAP_RESOLVE, GAP_ACCEPT, GAP_DISMISS, GAP_REOPEN,
+        TRACE_POLICY_CHANGE,
     })
 
 
@@ -283,8 +308,12 @@ class DecisionTargetKind:
     CANDIDATE = "candidate"
     RELATION_CANDIDATE = "relation-candidate"
     WORKSPACE = "workspace"
+    CONFLICT = "conflict"                       # Phase 6, additive
+    CONFLICT_CANDIDATE = "conflict-candidate"   # Phase 6, additive
+    GAP = "gap"                                 # Phase 6, additive
     VALUES = frozenset({ENTITY, CLAIM, RELATION, ALIAS, BINDING, CANDIDATE,
-                        RELATION_CANDIDATE, WORKSPACE})
+                        RELATION_CANDIDATE, WORKSPACE, CONFLICT,
+                        CONFLICT_CANDIDATE, GAP})
 
 
 class RevisionAction:
@@ -307,19 +336,27 @@ class RevisionAction:
     WITHDRAW = "withdraw"
     AUTHORITY_CHANGE = "authority-change"
     RELATION_STATE_CHANGE = "relation-state-change"
+    CONFLICT_SCAN = "conflict-scan"                     # Phase 6, additive
+    CONFLICT_PROMOTION = "conflict-promotion"           # Phase 6, additive
+    CONFLICT_GOVERNANCE = "conflict-governance"         # Phase 6, additive
+    GAP_GOVERNANCE = "gap-governance"                   # Phase 6, additive
+    TRACE_POLICY_CHANGE = "trace-policy-change"         # Phase 6, additive
     VALUES = frozenset({
         GRAPH_SEED, GRAPH_SYNC, GRAPH_RECONCILE, CANDIDATE_PROMOTION,
         RELATION_PROMOTION, MANUAL_ENTITY_CREATE, MANUAL_CLAIM_CREATE,
         MANUAL_RELATION_CREATE, ALIAS_CHANGE, ENTITY_MERGE, ENTITY_SPLIT,
         CLAIM_SUPERSEDE, SUPERSEDE, WITHDRAW, AUTHORITY_CHANGE,
-        RELATION_STATE_CHANGE,
+        RELATION_STATE_CHANGE, CONFLICT_SCAN, CONFLICT_PROMOTION,
+        CONFLICT_GOVERNANCE, GAP_GOVERNANCE, TRACE_POLICY_CHANGE,
     })
 
 
 class PromotionCandidateKind:
     SEMANTIC_CANDIDATE = "semantic-candidate"
     RELATION_CANDIDATE = "relation-candidate"
-    VALUES = frozenset({SEMANTIC_CANDIDATE, RELATION_CANDIDATE})
+    CONFLICT_CANDIDATE = "conflict-candidate"   # Phase 6, additive
+    VALUES = frozenset({SEMANTIC_CANDIDATE, RELATION_CANDIDATE,
+                        CONFLICT_CANDIDATE})
 
 
 class PromotionStatus:

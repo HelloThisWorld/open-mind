@@ -567,6 +567,9 @@ def cmd_bundle_export(args, out) -> Tuple[int, Dict[str, Any]]:
     manifest = export_bundle(
         args.workspace, args.output, current_only=current_only,
         knowledge_revision=getattr(args, "knowledge_revision", None),
+        include_traceability=bool(getattr(args, "include_traceability",
+                                          False)),
+        include_conflicts=bool(getattr(args, "include_conflicts", False)),
         generated_at=getattr(args, "generated_at", None) or "")
     payload = _ok({"manifest": manifest, "output": args.output})
 
@@ -1024,7 +1027,7 @@ def register(sub: argparse._SubParsersAction,
     b_export = bundle_sub.add_parser(
         "export", parents=[common],
         help="export the workspace's canonical knowledge as a "
-             "2.0.0-draft.1 bundle (separate from .openmind 1.x)")
+             "2.0.0-draft.2 bundle (separate from .openmind 1.x)")
     _ws(b_export)
     b_export.add_argument("--output", required=True,
                           help="directory to write (e.g. ./.openmind-v2)")
@@ -1040,6 +1043,14 @@ def register(sub: argparse._SubParsersAction,
                           type=int, metavar="N",
                           help="cap records at creation revision N "
                                "(stamp filter; not point-in-time state)")
+    b_export.add_argument("--include-traceability",
+                          dest="include_traceability", action="store_true",
+                          help="add trace policies/runs/paths/steps/gaps/"
+                               "coverage snapshots (v2 Phase 6)")
+    b_export.add_argument("--include-conflicts", dest="include_conflicts",
+                          action="store_true",
+                          help="add canonical conflicts with object/"
+                               "evidence/decision joins (v2 Phase 6)")
     b_export.add_argument("--generated-at", dest="generated_at",
                           metavar="ISO8601",
                           help="override generatedAt (reproducible builds)")

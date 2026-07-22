@@ -79,6 +79,7 @@ runner switches the connection to explicit-transaction mode
 | 4 | `document_ingestion` | document ingestion: `segments.content_blob_hash`, `jobs.payload_json`, `document_parses`, `document_index` + their indexes. Additive — two columns with defaults and two new tables |
 | 5 | `semantic_plane` | the Phase 4 semantic plane: `workspace_semantic_policies`, `semantic_analysis_runs`, `semantic_analysis_targets`, `semantic_candidates` (+ evidence join), `semantic_relation_candidates` (+ evidence join), `semantic_conflict_candidates` (+ evidence join), `semantic_usage`, `semantic_cache`, `project_lenses` + their indexes. Additive — twelve new tables, no existing row touched |
 | 6 | `knowledge_graph` | the Phase 5 canonical Engineering Knowledge Graph: `engineering_entities`, `engineering_entity_aliases`, `engineering_entity_bindings`, `engineering_claims` (+ evidence join), `engineering_relations` (+ evidence join), `knowledge_decisions`, `knowledge_revisions`, `knowledge_promotions`, `knowledge_projection_state` + their indexes. Additive — eleven new tables, no existing row touched |
+| 7 | `traceability_conflicts` | Phase 6 formal traceability + governed conflicts: `workspace_traceability_policies`, `traceability_runs`, `trace_paths`, `trace_path_steps`, `trace_path_evidence`, `traceability_gaps`, `traceability_coverage_snapshots`, `engineering_conflicts`, `engineering_conflict_objects`, `engineering_conflict_evidence`, `engineering_conflict_decisions` + their indexes. Additive — eleven new tables, no existing row touched |
 
 `v0003` adds the OpenMind v2 canonical content-identity model. `assets`
 references `projects(id)` and the whole subtree cascades on `ON DELETE CASCADE`,
@@ -140,14 +141,28 @@ promoted candidate's id is stored as provenance, never as an ownership edge,
 so canonical history cannot be cascade-deleted through the Phase 4 tables.
 See [docs/v2/phase-5-knowledge-graph.md](v2/phase-5-knowledge-graph.md).
 
+`v0007` adds Phase 6 formal traceability and governed conflicts: the
+per-workspace Traceability Policy selection, traceability runs, persisted
+trace paths with their ordered steps and evidence joins, first-class gaps
+(with detection fingerprints so governance status survives refreshes),
+immutable coverage snapshots, and canonical engineering conflicts with
+object joins, evidence-quote joins and their own decision ledger (each
+decision also linked to a Phase 5 Knowledge Decision). Trace/conflict rows
+reference canonical graph objects by id and never duplicate their content;
+internal foreign keys cascade (conflict → objects/evidence/decisions, path
+→ steps/evidence) while there is deliberately NO foreign key into the
+graph or source plane — trace history must never block or cascade a
+canonical governance action. See
+[docs/v2/phase-6-traceability-conflicts.md](v2/phase-6-traceability-conflicts.md).
+
 ### Upgrading an existing database
 
 Nothing to do — open OpenMind and it migrates itself. Concretely:
 
 ```text
-empty database    -> v0001..v0006 create every table     -> ledger records 1..6
-legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..6
-                     v0002..v0006 apply additively           (existing data untouched)
+empty database    -> v0001..v0007 create every table     -> ledger records 1..7
+legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..7
+                     v0002..v0007 apply additively           (existing data untouched)
 current database  -> nothing to apply                     -> no writes
 ```
 
@@ -176,6 +191,16 @@ survive byte-for-byte (`tests/verify_knowledge_migration.py` builds a real
 v0005 database, seeds representative rows and proves it). Graph rows appear
 only through deterministic projection, explicit manual creation or explicit
 candidate promotion — never from the migration itself.
+
+A Phase 1–5 database upgrades to v0007 the same way: every `v0007` change is
+a new empty table, so all of the above PLUS Entities, Claims, Relations,
+aliases, bindings, Knowledge Revisions, Human Decisions, promotions and the
+projection watermark survive byte-for-byte
+(`tests/verify_traceability_migration.py` builds a real v0006 database,
+seeds representative rows across every phase and proves it). Trace paths,
+gaps, coverage snapshots and conflicts appear only through an explicit
+`trace refresh` / `conflict scan` / `conflict promote` — never from the
+migration itself.
 
 A legacy database is **baselined, not recreated**. `v0001` is written entirely
 with `CREATE TABLE IF NOT EXISTS`, so against a database that already has those
