@@ -154,6 +154,16 @@ def delete_project(project_id: str) -> None:
                             "knowledge_projection_state"):
             _c().execute(f"DELETE FROM {graph_table} WHERE workspace_id=?",
                          (project_id,))
+        # Traceability + conflicts (v0007): conflict deletion cascades to
+        # objects/evidence/decisions, path deletion to steps/evidence; the
+        # remaining tables carry no FK and are removed explicitly.
+        for trace_table in ("engineering_conflicts", "trace_paths",
+                            "traceability_gaps",
+                            "traceability_coverage_snapshots",
+                            "traceability_runs",
+                            "workspace_traceability_policies"):
+            _c().execute(f"DELETE FROM {trace_table} WHERE workspace_id=?",
+                         (project_id,))
         _c().execute("DELETE FROM projects WHERE id=?", (project_id,))
         _c().execute("DELETE FROM jobs WHERE project_id=?", (project_id,))
         _c().execute("DELETE FROM file_index WHERE project_id=?", (project_id,))

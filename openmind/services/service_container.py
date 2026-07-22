@@ -41,6 +41,7 @@ class ServiceContainer:
         self._semantic = None
         self._lenses = None
         self._knowledge = None
+        self._traceability = None
 
     @property
     def workspaces(self) -> WorkspaceService:
@@ -112,6 +113,18 @@ class ServiceContainer:
             self._knowledge = KnowledgeService(
                 self.workspaces, ensure_worker=self._ensure_worker)
         return self._knowledge
+
+    @property
+    def traceability(self):
+        # Formal traceability + governed conflicts (v2 Phase 6). Lazy for
+        # the same reason as the knowledge graph: export/doctor never pay
+        # for it, and constructing it never starts a worker.
+        if self._traceability is None:
+            from ..traceability.service import TraceabilityService
+            self._traceability = TraceabilityService(
+                self.workspaces, self.jobs,
+                ensure_worker=self._ensure_worker)
+        return self._traceability
 
     @property
     def export(self) -> ExportService:

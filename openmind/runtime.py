@@ -124,6 +124,10 @@ class OpenMindRuntime:
         return self.services.knowledge
 
     @property
+    def traceability(self):
+        return self.services.traceability
+
+    @property
     def export(self):
         return self.services.export
 

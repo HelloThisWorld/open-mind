@@ -55,9 +55,11 @@ import threading
 lock = threading.RLock()
 
 all_migrations = migration_runner.discover()
-check("v0006 is discovered as the migration head",
-      all_migrations[-1].version == 6
-      and all_migrations[-1].name == "knowledge_graph")
+check("v0006 knowledge_graph is discovered",
+      any(m.version == 6 and m.name == "knowledge_graph"
+          for m in all_migrations))
+check("the migration head is at least v0006",
+      all_migrations[-1].version >= 6)
 
 original_discover = migration_runner.discover
 migration_runner.discover = lambda: [m for m in original_discover()
@@ -86,7 +88,14 @@ conn.execute("INSERT INTO semantic_candidates (id,workspace_id,"
              "'2026-01-01','2026-01-01')")
 conn.commit()
 
-result_v6 = migration_runner.migrate(conn, lock)
+# Cap discovery at v0006: this suite pins the Phase 5 migration's own
+# behavior; the Phase 6 migration has its own suite.
+migration_runner.discover = lambda: [m for m in original_discover()
+                                     if m.version <= 6]
+try:
+    result_v6 = migration_runner.migrate(conn, lock)
+finally:
+    migration_runner.discover = original_discover
 check("v0005 -> v0006 applies exactly one migration",
       [m for m in result_v6.applied] == ["0006_knowledge_graph"]
       if hasattr(result_v6, "applied") else True)
@@ -104,12 +113,17 @@ check("prior semantic candidate survived",
       conn.execute("SELECT COUNT(*) FROM semantic_candidates"
                    ).fetchone()[0] == 1)
 
-# repeated migration is a no-op
-before = conn.execute("SELECT version, checksum FROM schema_migrations "
-                      "ORDER BY version").fetchall()
-result_again = migration_runner.migrate(conn, lock)
-after = conn.execute("SELECT version, checksum FROM schema_migrations "
-                     "ORDER BY version").fetchall()
+# repeated migration is a no-op (still capped at v0006)
+migration_runner.discover = lambda: [m for m in original_discover()
+                                     if m.version <= 6]
+try:
+    before = conn.execute("SELECT version, checksum FROM schema_migrations "
+                          "ORDER BY version").fetchall()
+    result_again = migration_runner.migrate(conn, lock)
+    after = conn.execute("SELECT version, checksum FROM schema_migrations "
+                         "ORDER BY version").fetchall()
+finally:
+    migration_runner.discover = original_discover
 check("repeated migration applies nothing",
       [tuple(r) for r in before] == [tuple(r) for r in after])
 check("repeated migration keeps version 6",
@@ -184,10 +198,12 @@ check("failed migration rolls back its DDL and writes no ledger row",
 conn.close()
 fconn.close()
 
-# the shared runtime also lands on v6
+# the shared runtime lands on the current head (v0007 as of Phase 6) —
+# which includes v0006; the graph tables exist either way.
 runtime = get_runtime()
-check("runtime bootstrap reports schema version 6",
-      runtime.info()["schema_version"] == 6)
-check("runtime version is 1.5.0-dev", runtime.version == "1.5.0-dev")
+check("runtime bootstrap reports at least schema version 6",
+      runtime.info()["schema_version"] >= 6)
+check("runtime version advanced to 1.6.0-dev",
+      runtime.version == "1.6.0-dev")
 
 finish()

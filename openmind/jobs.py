@@ -122,6 +122,10 @@ def _worker_loop() -> None:
                 _run_semantic_analysis(job["job_id"])
             elif job["type"] == "lens_induction":
                 _run_lens_induction(job["job_id"])
+            elif job["type"] == "traceability_refresh":
+                _run_traceability_refresh(job["job_id"])
+            elif job["type"] == "conflict_scan":
+                _run_conflict_scan(job["job_id"])
             else:
                 db.update_job(job["job_id"], status="failed",
                               error=f"unknown job type {job['type']}")
@@ -480,7 +484,10 @@ def reconcile_semantic_staleness(project_id: str) -> None:
 
     The canonical graph reconciles right after (v2 Phase 5), in this order
     on purpose: candidate staleness first, then graph staleness, so graph
-    statistics computed afterwards see both planes settled."""
+    statistics computed afterwards see both planes settled. The trace plane
+    (v2 Phase 6) marks last: a LIGHTWEIGHT local staleness pass over
+    persisted trace paths — full traceability rebuilding stays an explicit
+    ``trace refresh``, and none of this calls a model."""
     try:
         from .semantic import store as semantic_store
         result = semantic_store.reconcile_staleness(project_id)
@@ -500,6 +507,122 @@ def reconcile_semantic_staleness(project_id: str) -> None:
     except Exception as exc:
         print(f"[knowledge] graph staleness reconciliation failed for "
               f"{project_id}: {exc}", flush=True)
+    try:
+        from .traceability.snapshots import reconcile_trace_staleness
+        trace_result = reconcile_trace_staleness(project_id)
+        if trace_result.get("changed"):
+            print(f"[traceability] trace staleness reconciled for "
+                  f"{project_id}: {trace_result['paths_staled']} staled, "
+                  f"{trace_result['paths_broken']} broken", flush=True)
+    except Exception as exc:
+        print(f"[traceability] trace staleness reconciliation failed for "
+              f"{project_id}: {exc}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Traceability refresh + conflict scan (v2 Phase 6)
+# ---------------------------------------------------------------------------
+def enqueue_traceability_refresh(project_id: str, *,
+                                 scope: Optional[Dict[str, Any]] = None,
+                                 force: bool = False) -> Dict[str, Any]:
+    """Queue one traceability refresh. The payload carries identifiers and
+    options only — never document or code content."""
+    job = db.create_job(project_id, "traceability_refresh", None)
+    db.set_job_payload(job["job_id"], {
+        "workspace_id": project_id,
+        "scope": dict(scope or {}),
+        "force": bool(force),
+    })
+    _wake.set()
+    return db.get_job(job["job_id"])
+
+
+def _run_traceability_refresh(job_id: str) -> None:
+    """Execute one trace refresh inside the single worker. Deterministic and
+    provider-free; cancellable at step boundaries via the job control."""
+    from .traceability import snapshots as trace_snapshots
+    from .runtime import get_runtime
+
+    job = db.get_job(job_id)
+    payload = db.get_job_payload(job_id)
+    workspace_id = str(payload.get("workspace_id") or job["project_id"])
+    scope = payload.get("scope") or {}
+    force = bool(payload.get("force"))
+
+    def _step(name: str) -> None:
+        _checkpoint(job_id)
+        db.update_job(job_id, step=name)
+
+    def _cancelled() -> bool:
+        return _control(job_id) in ("terminate", "pause")
+
+    service = get_runtime().traceability
+    policy = service.active_policy(workspace_id)
+    result = trace_snapshots.run_refresh(
+        workspace_id, policy, scope=scope, force=force,
+        progress=_step, cancelled=_cancelled)
+    if result.get("cancelled"):
+        db.update_job(job_id, status="failed", error="terminated by user",
+                      finished_at=db.now())
+        return
+    run = result.get("run") or {}
+    db.update_job(job_id, status="done", step="done", finished_at=db.now(),
+                  progress={"no_op": bool(result.get("no_op")),
+                            "run_id": run.get("id", ""),
+                            "run_status": run.get("status", "")})
+
+
+def enqueue_conflict_scan(project_id: str, *,
+                          actor: str = "") -> Dict[str, Any]:
+    """Queue one deterministic conflict scan. Identifier/options payload
+    only; no provider is ever called by the scan."""
+    job = db.create_job(project_id, "conflict_scan", None)
+    db.set_job_payload(job["job_id"], {
+        "workspace_id": project_id,
+        "actor": str(actor or "")[:200],
+    })
+    _wake.set()
+    return db.get_job(job["job_id"])
+
+
+def _run_conflict_scan(job_id: str) -> None:
+    from .traceability import conflicts as trace_conflicts
+
+    job = db.get_job(job_id)
+    payload = db.get_job_payload(job_id)
+    workspace_id = str(payload.get("workspace_id") or job["project_id"])
+    actor = str(payload.get("actor") or "")
+
+    def _step(name: str) -> None:
+        _checkpoint(job_id)
+        db.update_job(job_id, step=name)
+
+    def _cancelled() -> bool:
+        return _control(job_id) in ("terminate", "pause")
+
+    result = trace_conflicts.scan_conflicts(
+        workspace_id, actor=actor, progress=_step, cancelled=_cancelled)
+    if result.get("status") == "cancelled":
+        db.update_job(job_id, status="failed", error="terminated by user",
+                      finished_at=db.now())
+        return
+    status = "done" if result.get("status") == "done" else "failed"
+    if result.get("status") == "partial":
+        # A partial scan is NOT reported as complete: the job fails with
+        # the explicit per-detector errors in its error field.
+        db.update_job(job_id, status="failed", step="done",
+                      error="partial scan: " + "; ".join(
+                          f"{e['detector']}: {e['error']}"
+                          for e in result.get("detector_errors", []))[:500],
+                      finished_at=db.now(),
+                      progress={"created": len(result.get("created", [])),
+                                "scan_status": "partial"})
+        return
+    db.update_job(job_id, status=status, step="done", finished_at=db.now(),
+                  progress={"created": len(result.get("created", [])),
+                            "superseded":
+                                len(result.get("superseded", [])),
+                            "scan_status": result.get("status", "")})
 
 
 def enqueue_ask(scope_id: str, pids: List[str], project_id: str,
@@ -641,6 +764,15 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
         knowledge_store.clear_workspace_graph(project_id)
     except Exception as exc:
         print(f"[terminate] knowledge graph wipe failed for {project_id}: "
+              f"{exc}", flush=True)
+    # 3d) wipe traceability + conflicts (v2 Phase 6): trace paths, gaps,
+    # coverage snapshots and canonical conflicts are all anchored to the
+    # graph wiped above, so they go with it.
+    try:
+        from .traceability import store as traceability_store
+        traceability_store.clear_workspace_traceability(project_id)
+    except Exception as exc:
+        print(f"[terminate] traceability wipe failed for {project_id}: "
               f"{exc}", flush=True)
     # cases: keep but flag stale, unless clearing
     if clear_cases:

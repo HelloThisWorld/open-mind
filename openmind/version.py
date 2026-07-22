@@ -6,31 +6,34 @@ FastAPI app + ``GET /api/health``, and the ``.openmind`` artifact manifest's
 between surfaces.
 
 This is a PRE-v2 development version on purpose. OpenMind v2's later
-enterprise features (formal Requirement Traceability, conflict resolution,
-change-impact analysis, OCR) are NOT implemented; labelling the current build
-``2.0.0`` would be a false claim. ``1.5.0-dev`` is the honest reading:
-Phase 5 added the canonical Engineering Knowledge Graph — durable
-evidence-bound Entities, Claims and Relations entered only through
-deterministic projection, explicit manual creation or the explicit promotion
-of a human-confirmed semantic Candidate, versioned by per-workspace Knowledge
-Revisions, audited by immutable Human Decisions, searchable through a
-separate graph vector projection, and exportable as the Knowledge Bundle
-2.0 **Draft** — on top of the Phase 4 semantic plane, the Phase 3 document
-plane, the Phase 2 Asset/Revision/Segment/Evidence foundation and the
-Phase 1 tool-first runtime.
+enterprise features (Git branch/PR change-impact overlays, connectors, OCR)
+are NOT implemented; labelling the current build ``2.0.0`` would be a false
+claim. ``1.6.0-dev`` is the honest reading: Phase 6 added formal
+Requirement Traceability and governed Conflict management — policy-driven,
+evidence-verified trace paths over the Phase 5 canonical graph (a generic
+graph path is NOT a trace), coverage snapshots with honest zero-denominator
+handling, first-class gaps and orphans, incremental recomputation tied to
+Knowledge Revision × policy checksum × trace engine version, deterministic
+comparable-fact conflict detection (never free-prose contradiction
+guessing), explicit Conflict Candidate promotion, and a fully audited
+conflict lifecycle — on top of the Phase 5 canonical Engineering Knowledge
+Graph, the Phase 4 semantic plane, the Phase 3 document plane, the Phase 2
+Asset/Revision/Segment/Evidence foundation and the Phase 1 tool-first
+runtime.
 
-What Phase 5 pointedly does NOT do: promote anything automatically (review
-and promotion stay separate acts), resolve conflicts (conflict candidates
-stay candidates for Phase 6), or claim the generic graph path command is
-formal traceability. Ordinary ingestion still makes zero model calls.
+What Phase 6 pointedly does NOT do: rebuild traces implicitly (refresh is
+explicit or locally scheduled, model-free), resolve conflicts automatically,
+rewrite canonical Claims during resolution, promote Conflict Candidates
+automatically, or infer authority. Ordinary ingestion still makes zero
+model calls.
 
 The artifact ``schemaVersion`` is deliberately NOT derived from this constant —
 it is a separate, frozen integration contract owned by
 :mod:`openmind.artifacts` and remains ``1.1.0``. The Knowledge Bundle has its
-own draft version (``2.0.0-draft.1``) owned by :mod:`openmind.knowledge.bundle`.
+own draft version (``2.0.0-draft.2``) owned by :mod:`openmind.knowledge.bundle`.
 """
 from __future__ import annotations
 
-RUNTIME_VERSION = "1.5.0-dev"
+RUNTIME_VERSION = "1.6.0-dev"
 
 __all__ = ["RUNTIME_VERSION"]

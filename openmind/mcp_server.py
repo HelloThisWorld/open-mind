@@ -659,6 +659,133 @@ KNOWLEDGE_TOOL_NAMES = tuple(fn.__name__ for fn in KNOWLEDGE_TOOLS)
 
 
 # ---------------------------------------------------------------------------
+# Traceability + conflict tools (OpenMind v2 Phase 6) — ADDITIVE and
+# STRICTLY READ-ONLY.
+#
+# Deliberately absent: anything that changes a trace policy, refreshes
+# traceability, scans conflicts, promotes a conflict candidate, resolves or
+# dismisses anything, or mutates the canonical graph. Every one of those is
+# an explicit CLI (or REST) verb requiring a caller-supplied actor; Claude
+# Code drives them through its shell where the command is visible. Every
+# result is bounded, workspace-scoped and stamped with the Knowledge
+# Revision and policy checksum it was computed against.
+# ---------------------------------------------------------------------------
+def trace_requirement(scope: str, entity_id: str,
+                      include_stale: bool = False,
+                      max_paths: int = 10) -> Dict[str, Any]:
+    """FORMAL Requirement traceability under the workspace's active
+    Traceability Policy (not generic graph reachability — that stays
+    ``find_graph_path``). Returns policy-validated paths per kind, stage
+    coverage, gaps, ambiguities and every traversal cap. A missing link is
+    returned as a gap, never invented."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().traceability.trace_requirement(
+        pid, entity_id, include_stale=include_stale, max_paths=max_paths)
+
+
+def trace_code(scope: str, entity_id: str,
+               include_stale: bool = False) -> Dict[str, Any]:
+    """Reverse Code trace: upstream requirements/design/interfaces and
+    downstream tests/results for one code-component / code-symbol /
+    configuration / database-object / message-topic entity. Untraced code
+    is reported as ``orphan: true, classification: "untraced"`` — a fact,
+    never "invalid"."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().traceability.trace_code(
+        pid, entity_id, include_stale=include_stale)
+
+
+def trace_test(scope: str, entity_id: str,
+               include_stale: bool = False) -> Dict[str, Any]:
+    """Reverse Test trace: verified requirements, implementation targets
+    and supporting evidence for one test-case / test-result entity, with an
+    honest ``untraced`` status when no requirement path exists."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().traceability.trace_test(
+        pid, entity_id, include_stale=include_stale)
+
+
+def get_trace_path(scope: str, trace_id: str) -> Dict[str, Any]:
+    """One PERSISTED trace path (tr_...) with its ordered steps and
+    evidence joins, exactly as the last refresh validated it."""
+    from .runtime import get_runtime
+    from .traceability.errors import TracePathNotFound
+    traceability = get_runtime().traceability
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return traceability.get_trace_path(pid, trace_id)
+        except TracePathNotFound as exc:
+            last = exc
+    raise last or ValueError(f"trace path not found: {trace_id}")
+
+
+def get_traceability_coverage(scope: str) -> Dict[str, Any]:
+    """The latest CURRENT coverage snapshot: per-stage and per-requirement
+    ratios with honest null percentages on zero denominators, and the
+    policy-driven status. ``snapshot: null`` when no refresh has run."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().traceability.get_coverage(pid)
+
+
+def list_traceability_gaps(scope: str, gap_type: Optional[str] = None,
+                           status: Optional[str] = None,
+                           limit: int = 100) -> Dict[str, Any]:
+    """Traceability gaps (bounded): missing stages, stale/broken paths,
+    ambiguity, orphans — first-class governance data the engine returns
+    instead of inventing links. Filter by gap_type and status
+    (open/resolved/accepted/dismissed/stale)."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().traceability.list_gaps(
+        pid, gap_type=gap_type, status=status, limit=limit)
+
+
+def list_engineering_conflicts(scope: str, status: Optional[str] = None,
+                               category: Optional[str] = None,
+                               limit: int = 100) -> Dict[str, Any]:
+    """Canonical engineering conflicts (bounded): deterministic
+    comparable-fact detections, promoted conflict candidates and manual
+    records, with their lifecycle status. Governance verbs stay on the
+    CLI."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().traceability.list_conflicts(
+        pid, status=status, category=category, limit=limit)
+
+
+def get_engineering_conflict(scope: str, conflict_id: str) -> Dict[str, Any]:
+    """One conflict with its object joins, verified evidence quotes and
+    complete decision history (every action doubly audited in the conflict
+    ledger and the Knowledge Decision ledger)."""
+    from .runtime import get_runtime
+    from .traceability.errors import ConflictNotFound
+    traceability = get_runtime().traceability
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return traceability.get_conflict(pid, conflict_id)
+        except ConflictNotFound as exc:
+            last = exc
+    raise last or ValueError(f"conflict not found: {conflict_id}")
+
+
+#: Additive read-only traceability/conflict tools (v2 Phase 6). Registered
+#: ALONGSIDE everything above — 35 + 8 = 43 in total.
+TRACE_TOOLS: List[Callable[..., Any]] = [
+    trace_requirement, trace_code, trace_test, get_trace_path,
+    get_traceability_coverage, list_traceability_gaps,
+    list_engineering_conflicts, get_engineering_conflict,
+]
+
+TRACE_TOOL_NAMES = tuple(fn.__name__ for fn in TRACE_TOOLS)
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
@@ -686,6 +813,8 @@ def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
     for fn in SEMANTIC_TOOLS:              # additive read-only semantic/lens tools (Phase 4)
         server.tool()(fn)
     for fn in KNOWLEDGE_TOOLS:             # additive read-only graph tools (Phase 5)
+        server.tool()(fn)
+    for fn in TRACE_TOOLS:                 # additive read-only trace/conflict tools (Phase 6)
         server.tool()(fn)
     return server
 
