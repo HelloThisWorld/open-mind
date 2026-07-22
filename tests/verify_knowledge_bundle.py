@@ -59,7 +59,7 @@ manifest_b = export_bundle(pid, str(out_b), current_only=True,
 
 check("bundle schema version is the draft",
       manifest["bundleSchemaVersion"] == BUNDLE_SCHEMA_VERSION
-      == "2.0.0-draft.1")
+      == "2.0.0-draft.2")
 check("manifest records workspace, revision and counts",
       manifest["workspaceId"] == pid
       and manifest["knowledgeRevision"] >= 3

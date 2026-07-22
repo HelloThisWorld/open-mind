@@ -69,10 +69,14 @@ KNOWLEDGE = {"get_graph_stats", "search_graph", "get_graph_node",
              "expand_graph", "find_graph_path", "list_engineering_entities",
              "get_engineering_entity", "get_engineering_claim",
              "get_engineering_relation"}
+# Phase 6 eight read-only traceability/conflict tools.
+TRACE = {"trace_requirement", "trace_code", "trace_test", "get_trace_path",
+         "get_traceability_coverage", "list_traceability_gaps",
+         "list_engineering_conflicts", "get_engineering_conflict"}
 check("all nine core MCP tools remain", CORE <= tool_names)
 check("the four read-only asset MCP tools are added", ASSET <= tool_names)
 check("every registered tool is an accounted-for addition",
-      tool_names == CORE | ASSET | DOCUMENT | SEMANTIC | KNOWLEDGE)
+      tool_names == CORE | ASSET | DOCUMENT | SEMANTIC | KNOWLEDGE | TRACE)
 check("the MCP server keeps its name", server.name == "open-mind")
 
 # ---------------------------------------------------------------------------

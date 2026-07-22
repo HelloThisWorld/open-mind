@@ -119,7 +119,8 @@ check("repeat run: reports every migration as already applied",
       again.already_applied == ["0001_baseline", "0002_paths_sidecar",
                                 "0003_asset_model", "0004_document_ingestion",
                                 "0005_semantic_plane",
-                                "0006_knowledge_graph"])
+                                "0006_knowledge_graph",
+                                "0007_traceability_conflicts"])
 check("repeat run: version is unchanged", again.version == result.version)
 
 # ---------------------------------------------------------------------------
