@@ -1155,6 +1155,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import cli_knowledge
     cli_knowledge.register(sub, common, knowledge_sub)
 
+    # -- formal traceability + governed conflicts (v2 Phase 6): the trace
+    # and conflict groups.
+    from . import cli_trace
+    cli_trace.register(sub, common)
+
     serve = sub.add_parser("serve", parents=[common],
                            help="run the FastAPI web application")
     serve.add_argument("--host", default="127.0.0.1",

@@ -334,6 +334,56 @@ class AuthorityReq(BaseModel):
     note: str = ""
 
 
+# ---------------------------------------------------------------------------
+# Traceability + conflicts (v2 Phase 6)
+# ---------------------------------------------------------------------------
+class TracePolicySetReq(BaseModel):
+    policy_name: str
+    actor: str = ""
+    note: str = ""
+
+
+class TracePolicyValidateReq(BaseModel):
+    document: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceRefreshReq(BaseModel):
+    scope: Dict[str, Any] = Field(default_factory=dict)
+    force: bool = False
+    wait: bool = True
+
+
+class GapGovernanceReq(BaseModel):
+    actor: str = ""
+    note: str = ""
+    expires_at: str = ""
+    engine_exception: str = ""
+
+
+class ConflictScanReq(BaseModel):
+    actor: str = ""
+    wait: bool = True
+
+
+class ConflictPromotionReq(BaseModel):
+    candidate_id: str
+    actor: str = ""
+    note: str = ""
+
+
+class ConflictPromotionPlanReq(BaseModel):
+    candidate_id: str
+
+
+class ConflictGovernanceReq(BaseModel):
+    actor: str = ""
+    note: str = ""
+    expires_at: str = ""
+    follow_up: str = ""
+    resolution_type: str = ""
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class PromotionReq(BaseModel):
     candidate_id: str
     actor: str = ""

@@ -2,7 +2,7 @@
 
 A SEPARATE contract from the frozen ``.openmind`` 1.x artifact: its own
 command (``openmind bundle export``), its own directory (``.openmind-v2``),
-its own schema version (``2.0.0-draft.1``). Draft means draft — the layout
+its own schema version (``2.0.0-draft.2``). Draft means draft — the layout
 may change until the freeze, and there is no import.
 
 GUARANTEES (spec §31, verified by openmind.bundle_verify and the tests)
@@ -14,6 +14,15 @@ carries evidence; every relation endpoint and relation-evidence row resolves
 inside the bundle; the manifest records runtime version, bundle schema
 version, workspace, knowledge revision, timestamp, per-file SHA-256 hashes,
 record counts and honest warnings.
+
+Phase 6 (draft.2) adds OPT-IN traceability and conflict files
+(``--include-traceability`` / ``--include-conflicts``): trace policies,
+runs, paths + steps, gaps, coverage snapshots, and canonical conflicts with
+their object/evidence/decision joins. A current-only export carries the
+latest non-stale snapshot, current paths/gaps and open/under-review/
+accepted-risk conflicts; ``--include-history`` carries everything. Objects
+a trace or conflict references that fell outside the slice are BACKFILLED
+(with a manifest warning) so referential integrity holds inside the bundle.
 
 KNOWN DRAFT LIMITATION: ``--knowledge-revision N`` filters records by their
 created/updated revision stamps (created <= N). It does NOT reconstruct
@@ -34,7 +43,7 @@ from . import store
 from .reconciliation import reconcile_graph_staleness
 from .vocabularies import GraphLifecycleStatus
 
-BUNDLE_SCHEMA_VERSION = "2.0.0-draft.1"
+BUNDLE_SCHEMA_VERSION = "2.0.0-draft.2"
 
 #: Row caps per file — a bundle is an export, not a database dump. Exceeding
 #: a cap truncates WITH a manifest warning, never silently.
@@ -66,6 +75,8 @@ def _sorted(records: List[Dict[str, Any]], *keys: str
 def export_bundle(workspace_id: str, output_dir: str, *,
                   current_only: bool = True,
                   knowledge_revision: Optional[int] = None,
+                  include_traceability: bool = False,
+                  include_conflicts: bool = False,
                   generated_at: str = "") -> Dict[str, Any]:
     """Write the bundle directory. Returns the manifest."""
     workspace = db.get_project(workspace_id)
@@ -74,8 +85,11 @@ def export_bundle(workspace_id: str, output_dir: str, *,
         raise WorkspaceNotFound(workspace_id)
     if current_only:
         # A current-only export must not present knowledge whose sources
-        # moved on as current (spec §22).
+        # moved on as current (spec §22) — nor stale trace paths as current.
         reconcile_graph_staleness(workspace_id)
+        if include_traceability or include_conflicts:
+            from ..traceability.snapshots import reconcile_trace_staleness
+            reconcile_trace_staleness(workspace_id)
 
     warnings: List[str] = []
     revision_cap = (int(knowledge_revision)
@@ -218,6 +232,143 @@ def export_bundle(workspace_id: str, output_dir: str, *,
             "created_at": lens["created_at"],
         })
 
+    # -- traceability + conflicts (v2 Phase 6, opt-in) -----------------------
+    def _backfill_evidence_row(evidence_id: str, context: str) -> None:
+        if evidence_id in seen_evidence:
+            return
+        record = db.get_evidence(workspace_id, evidence_id)
+        if record:
+            seen_evidence.add(evidence_id)
+            evidence_rows.append(record)
+        else:
+            warnings.append(f"evidence {evidence_id} cited by {context} no "
+                            f"longer resolves in this workspace")
+
+    def _backfill_object(kind: str, object_id: str, context: str) -> None:
+        """Pull a referenced graph object into the export slice when the
+        slice filtered it out — referential integrity inside the bundle
+        beats slice purity, and the manifest says it happened. A backfilled
+        claim/relation brings its evidence joins with it."""
+        if kind == "entity" and object_id not in entity_ids:
+            row = store.get_entity(workspace_id, object_id)
+            if row:
+                entities.append(row)
+                entity_ids.add(object_id)
+                warnings.append(f"{context}: entity {object_id} was outside "
+                                f"the export slice and was backfilled")
+        elif kind == "claim" and object_id not in claim_ids:
+            row = store.get_claim(workspace_id, object_id)
+            if row:
+                joins = row.pop("evidence", [])
+                claims.append(row)
+                claim_ids.add(object_id)
+                _backfill_object("entity", row["entity_id"], context)
+                for ev in joins:
+                    claim_evidence.append({"claim_id": object_id, **ev})
+                    _backfill_evidence_row(ev["evidence_id"], context)
+                warnings.append(f"{context}: claim {object_id} was outside "
+                                f"the export slice and was backfilled")
+        elif kind == "relation" and object_id not in \
+                {r["id"] for r in relations}:
+            row = store.get_relation(workspace_id, object_id)
+            if row:
+                joins = row.pop("evidence", [])
+                relations.append(row)
+                _backfill_object("entity", row["source_entity_id"], context)
+                _backfill_object("entity", row["target_entity_id"], context)
+                for ev in joins:
+                    relation_evidence.append(
+                        {"relation_id": object_id, **ev})
+                    _backfill_evidence_row(ev["evidence_id"], context)
+                warnings.append(f"{context}: relation {object_id} was "
+                                f"outside the export slice and was "
+                                f"backfilled")
+
+    trace_policy_rows: List[Dict[str, Any]] = []
+    trace_run_rows: List[Dict[str, Any]] = []
+    trace_path_rows: List[Dict[str, Any]] = []
+    trace_step_rows: List[Dict[str, Any]] = []
+    trace_gap_rows: List[Dict[str, Any]] = []
+    coverage_rows: List[Dict[str, Any]] = []
+    conflict_rows: List[Dict[str, Any]] = []
+    conflict_object_rows: List[Dict[str, Any]] = []
+    conflict_evidence_rows: List[Dict[str, Any]] = []
+    conflict_decision_rows: List[Dict[str, Any]] = []
+
+    if include_traceability or include_conflicts:
+        from ..traceability import store as trace_store
+
+    if include_traceability:
+        selection = trace_store.get_workspace_policy(workspace_id)
+        if selection:
+            trace_policy_rows.append(selection)
+        if current_only:
+            snapshot = trace_store.latest_snapshot(workspace_id,
+                                                   current_only=True)
+            coverage_rows = [snapshot] if snapshot else []
+        else:
+            coverage_rows = trace_store.list_snapshots(
+                workspace_id, limit=MAX_ROWS_PER_FILE + 1)
+        trace_path_rows = trace_store.list_paths(
+            workspace_id, current_only=current_only,
+            limit=MAX_ROWS_PER_FILE + 1)
+        trace_gap_rows = trace_store.list_gaps(
+            workspace_id, current_only=current_only,
+            limit=MAX_ROWS_PER_FILE + 1)
+        if current_only:
+            wanted_runs = ({s["run_id"] for s in coverage_rows}
+                           | {p["run_id"] for p in trace_path_rows}
+                           | {g["run_id"] for g in trace_gap_rows}) - {""}
+            trace_run_rows = [r for r in trace_store.list_runs(
+                workspace_id, limit=MAX_ROWS_PER_FILE + 1)
+                if r["id"] in wanted_runs]
+        else:
+            trace_run_rows = trace_store.list_runs(
+                workspace_id, limit=MAX_ROWS_PER_FILE + 1)
+        for path in trace_path_rows:
+            _backfill_object("entity", path["root_entity_id"],
+                             f"trace path {path['id']}")
+            if path["target_entity_id"]:
+                _backfill_object("entity", path["target_entity_id"],
+                                 f"trace path {path['id']}")
+            for step in trace_store.path_steps(path["id"]):
+                trace_step_rows.append(step)
+                if step["node_kind"] == "entity":
+                    _backfill_object("entity", step["node_id"],
+                                     f"trace step {step['id']}")
+                if step["relation_id"]:
+                    _backfill_object("relation", step["relation_id"],
+                                     f"trace step {step['id']}")
+        for gap in trace_gap_rows:
+            if gap["root_entity_id"]:
+                _backfill_object("entity", gap["root_entity_id"],
+                                 f"trace gap {gap['id']}")
+
+    if include_conflicts:
+        all_conflicts = trace_store.list_conflicts(
+            workspace_id, limit=MAX_ROWS_PER_FILE + 1)
+        if current_only:
+            conflict_rows = [c for c in all_conflicts if c["status"] in
+                             ("open", "under-review", "accepted-risk")]
+        else:
+            conflict_rows = all_conflicts
+        for conflict in conflict_rows:
+            for obj in trace_store.conflict_objects(conflict["id"]):
+                conflict_object_rows.append(
+                    {"conflict_id": conflict["id"], **obj})
+                _backfill_object(obj["object_kind"], obj["object_id"],
+                                 f"conflict {conflict['id']}")
+            for join in trace_store.conflict_evidence(conflict["id"]):
+                conflict_evidence_rows.append(
+                    {"conflict_id": conflict["id"], **join})
+            for decision in trace_store.list_conflict_decisions(
+                    workspace_id, conflict_id=conflict["id"], limit=500):
+                conflict_decision_rows.append(decision)
+        # Conflict-cited evidence must resolve inside the bundle too.
+        for join in conflict_evidence_rows:
+            _backfill_evidence_row(join["evidence_id"],
+                                   f"conflict {join['conflict_id']}")
+
     # -- write ---------------------------------------------------------------
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -263,6 +414,41 @@ def export_bundle(workspace_id: str, output_dir: str, *,
         "lenses.jsonl": _jsonl(cap(_sorted(lens_rows, "name", "id"),
                                    "lenses")),
     }
+    if include_traceability:
+        files.update({
+            "traceability-policies.jsonl": _jsonl(cap(_sorted(
+                trace_policy_rows, "workspace_id"),
+                "traceability-policies")),
+            "traceability-runs.jsonl": _jsonl(cap(_sorted(
+                trace_run_rows, "created_at", "id"), "traceability-runs")),
+            "trace-paths.jsonl": _jsonl(cap(_sorted(
+                trace_path_rows, "root_entity_id", "path_kind", "id"),
+                "trace-paths")),
+            "trace-path-steps.jsonl": _jsonl(cap(sorted(
+                trace_step_rows,
+                key=lambda s: (str(s["trace_path_id"]),
+                               int(s["ordinal"]))), "trace-path-steps")),
+            "trace-gaps.jsonl": _jsonl(cap(_sorted(
+                trace_gap_rows, "root_entity_id", "gap_type", "id"),
+                "trace-gaps")),
+            "coverage-snapshots.jsonl": _jsonl(cap(_sorted(
+                coverage_rows, "created_at", "id"), "coverage-snapshots")),
+        })
+    if include_conflicts:
+        files.update({
+            "conflicts.jsonl": _jsonl(cap(_sorted(
+                conflict_rows, "category", "subject_key", "id"),
+                "conflicts")),
+            "conflict-objects.jsonl": _jsonl(cap(_sorted(
+                conflict_object_rows, "conflict_id", "role", "object_kind",
+                "object_id"), "conflict-objects")),
+            "conflict-evidence.jsonl": _jsonl(cap(_sorted(
+                conflict_evidence_rows, "conflict_id", "evidence_id",
+                "quote_hash"), "conflict-evidence")),
+            "conflict-decisions.jsonl": _jsonl(cap(_sorted(
+                conflict_decision_rows, "conflict_id", "created_at", "id"),
+                "conflict-decisions")),
+        })
     files.update(_schemas())
 
     file_meta: Dict[str, Dict[str, Any]] = {}
@@ -284,7 +470,9 @@ def export_bundle(workspace_id: str, output_dir: str, *,
         "knowledgeRevision": store.current_revision_number(workspace_id),
         "generatedAt": generated_at or _now_iso(),
         "mode": {"currentOnly": bool(current_only),
-                 "knowledgeRevisionCap": revision_cap},
+                 "knowledgeRevisionCap": revision_cap,
+                 "includeTraceability": bool(include_traceability),
+                 "includeConflicts": bool(include_conflicts)},
         "counts": {
             "assets": len(asset_rows), "revisions": len(revision_rows),
             "segments": len(segment_rows), "evidence": len(evidence_rows),
@@ -296,6 +484,18 @@ def export_bundle(workspace_id: str, output_dir: str, *,
             "decisions": len(decision_rows),
             "knowledgeRevisions": len(revisions_ledger),
             "lenses": len(lens_rows),
+            **({"traceabilityPolicies": len(trace_policy_rows),
+                "traceabilityRuns": len(trace_run_rows),
+                "tracePaths": len(trace_path_rows),
+                "tracePathSteps": len(trace_step_rows),
+                "traceGaps": len(trace_gap_rows),
+                "coverageSnapshots": len(coverage_rows)}
+               if include_traceability else {}),
+            **({"conflicts": len(conflict_rows),
+                "conflictObjects": len(conflict_object_rows),
+                "conflictEvidence": len(conflict_evidence_rows),
+                "conflictDecisions": len(conflict_decision_rows)}
+               if include_conflicts else {}),
         },
         "files": dict(sorted(file_meta.items())),
         "warnings": warnings,
