@@ -146,6 +146,63 @@ SUITE: List[Script] = [
            "additive REST + 7 read-only MCP tools + the 26-tool "
            "compatibility gate + artifact/bridge/Ask invariants"),
 
+    # -- canonical knowledge graph (v2 Phase 5) ------------------------------
+    # Ordered cheapest-first: the migration suite is pure sqlite; the model
+    # suites build one small workspace each; projection/staleness ingest a
+    # Java fixture; cli/adapters drive the full surfaces end to end.
+    Script("verify_knowledge_migration", CORE,
+           "v0006 graph schema: tables, indexes, idempotency, v1-v5 "
+           "checksum immutability, FK integrity, rollback"),
+    Script("verify_knowledge_entities", CORE,
+           "canonical entities: deterministic keys, identity uniqueness, "
+           "workspace scoping, evidence-required manual creation, alias "
+           "collisions reported"),
+    Script("verify_knowledge_claims", CORE,
+           "canonical claims: evidence + quote verification, dedup, "
+           "correction-by-supersede, explicit authority, lifecycle"),
+    Script("verify_knowledge_relations", CORE,
+           "canonical relations: endpoint/scoping rules, closed types, "
+           "self-relation and manual-inferred rejection, dedup, "
+           "reject/restore"),
+    Script("verify_knowledge_revisions", CORE,
+           "knowledge revision ledger: monotonic numbering, one tx = one "
+           "revision, failed tx = none, concurrency uniqueness"),
+    Script("verify_knowledge_decisions", CORE,
+           "human decision audit: every write decided, actor never "
+           "inferred, bounded notes/snapshots, immutability, no secrets"),
+    Script("verify_knowledge_promotion", CORE,
+           "candidate promotion: full eligibility matrix, plan-is-dry-run, "
+           "transactional idempotent promotion, classification/"
+           "revision-status non-interference, relation endpoints, "
+           "conflict candidates never promotable"),
+    Script("verify_knowledge_projection", CORE,
+           "deterministic projection: asset/segment/containment/call/facet "
+           "rules, zero provider calls, unchanged sync no-op, incremental "
+           "updates"),
+    Script("verify_knowledge_staleness", CORE,
+           "graph staleness: revision movement stales bindings/claims/"
+           "relations transitively; authority preserved; startup backstop"),
+    Script("verify_knowledge_merge_split", CORE,
+           "entity merge and split: transactional, auditable, nothing "
+           "deleted, duplicates deduplicated, invalid input aborts whole"),
+    Script("verify_knowledge_search", CORE,
+           "graph search + vector projection: exact-over-similar "
+           "precedence, stale filtering, collection isolation and "
+           "lifecycle"),
+    Script("verify_knowledge_graph", CORE,
+           "graph queries: node kinds, bounded deterministic expansion, "
+           "honest path outcomes, evidence summaries, subgraph"),
+    Script("verify_knowledge_bundle", CORE,
+           "Bundle 2.0 Draft: deterministic export, manifest hashes, "
+           "referential integrity, history modes, verifier catches "
+           "corruption, .openmind 1.1.0 unchanged"),
+    Script("verify_knowledge_cli", CORE,
+           "knowledge CLI contract: JSON, exit codes, graph/promotion/"
+           "entity/claim/relation/history/bundle commands"),
+    Script("verify_knowledge_adapters", CORE,
+           "additive knowledge REST routes + exactly 9 read-only MCP "
+           "graph tools + the 35-tool compatibility gate"),
+
     # -- template / docs pipeline -------------------------------------------
     Script("verify_templates", CORE, "template profile selection and validation"),
     Script("verify_facets", CORE, "template facets, roles and projections"),

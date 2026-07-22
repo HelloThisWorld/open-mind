@@ -1149,6 +1149,12 @@ def build_parser() -> argparse.ArgumentParser:
     from . import cli_semantic
     cli_semantic.register(sub, common)
 
+    # -- canonical knowledge graph (v2 Phase 5): graph / promotion /
+    # entity / claim / relation / bundle groups, plus the history
+    # subcommands of the existing `knowledge` group above.
+    from . import cli_knowledge
+    cli_knowledge.register(sub, common, knowledge_sub)
+
     serve = sub.add_parser("serve", parents=[common],
                            help="run the FastAPI web application")
     serve.add_argument("--host", default="127.0.0.1",

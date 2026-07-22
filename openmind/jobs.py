@@ -476,7 +476,11 @@ def _run_lens_induction(job_id: str) -> None:
 def reconcile_semantic_staleness(project_id: str) -> None:
     """Post-commit staleness hook (spec §22): mark semantic candidates whose
     source revisions moved on as stale. Best-effort — a reconciliation
-    failure must never fail the ingest that triggered it."""
+    failure must never fail the ingest that triggered it.
+
+    The canonical graph reconciles right after (v2 Phase 5), in this order
+    on purpose: candidate staleness first, then graph staleness, so graph
+    statistics computed afterwards see both planes settled."""
     try:
         from .semantic import store as semantic_store
         result = semantic_store.reconcile_staleness(project_id)
@@ -485,6 +489,16 @@ def reconcile_semantic_staleness(project_id: str) -> None:
                   f"{result}", flush=True)
     except Exception as exc:
         print(f"[semantic] staleness reconciliation failed for "
+              f"{project_id}: {exc}", flush=True)
+    try:
+        from .knowledge.reconciliation import reconcile_graph_staleness
+        graph_result = reconcile_graph_staleness(project_id)
+        if graph_result.get("changed"):
+            print(f"[knowledge] graph staleness reconciled for "
+                  f"{project_id}: revision "
+                  f"{graph_result.get('knowledge_revision')}", flush=True)
+    except Exception as exc:
+        print(f"[knowledge] graph staleness reconciliation failed for "
               f"{project_id}: {exc}", flush=True)
 
 
@@ -596,6 +610,8 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
     vectorstore.get_code_store(project_id).drop(cancel=_shutdown.is_set)
     vectorstore.drop_collection(vectorstore.documents_collection_name(project_id),
                                 cancel=_shutdown.is_set)
+    vectorstore.drop_collection(vectorstore.knowledge_collection_name(project_id),
+                                cancel=_shutdown.is_set)
     # 2) delete map/* and docs/*
     for sub in ("map", "docs"):
         d = config.project_dir(project_id) / sub
@@ -616,6 +632,16 @@ def terminate_project(project_id: str, clear_cases: bool = False) -> Dict[str, A
     # source-file removal, which only marks an Asset removed and keeps its history.
     db.clear_workspace_assets(project_id)
     content_store.clear_workspace(project_id)
+    # 3c) wipe the canonical knowledge graph (v2 Phase 5). Terminate is a
+    # full wipe of LEARNED data back to init; graph knowledge is anchored to
+    # the Asset model being wiped above, so keeping it would leave every
+    # binding and evidence join dangling.
+    try:
+        from .knowledge import store as knowledge_store
+        knowledge_store.clear_workspace_graph(project_id)
+    except Exception as exc:
+        print(f"[terminate] knowledge graph wipe failed for {project_id}: "
+              f"{exc}", flush=True)
     # cases: keep but flag stale, unless clearing
     if clear_cases:
         cases.clear_cases(project_id)

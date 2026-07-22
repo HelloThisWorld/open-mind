@@ -144,6 +144,16 @@ def delete_project(project_id: str) -> None:
         # so the cleanup is correct even if a future caller has the pragma off,
         # and so the intent is visible beside the other per-project deletes.
         _c().execute("DELETE FROM assets WHERE workspace_id=?", (project_id,))
+        # Canonical knowledge graph (v0006): entity deletion cascades to
+        # aliases/bindings/claims/relations/evidence joins; the ledger tables
+        # carry no FK and are removed explicitly.
+        _c().execute("DELETE FROM engineering_entities WHERE workspace_id=?",
+                     (project_id,))
+        for graph_table in ("knowledge_decisions", "knowledge_revisions",
+                            "knowledge_promotions",
+                            "knowledge_projection_state"):
+            _c().execute(f"DELETE FROM {graph_table} WHERE workspace_id=?",
+                         (project_id,))
         _c().execute("DELETE FROM projects WHERE id=?", (project_id,))
         _c().execute("DELETE FROM jobs WHERE project_id=?", (project_id,))
         _c().execute("DELETE FROM file_index WHERE project_id=?", (project_id,))

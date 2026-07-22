@@ -510,6 +510,155 @@ SEMANTIC_TOOL_NAMES = tuple(fn.__name__ for fn in SEMANTIC_TOOLS)
 
 
 # ---------------------------------------------------------------------------
+# Knowledge-graph tools (OpenMind v2 Phase 5) — ADDITIVE and STRICTLY
+# READ-ONLY.
+#
+# Deliberately absent: anything that promotes a candidate, creates an
+# Entity/Claim/Relation, merges or splits, changes authority, seeds or syncs
+# the graph, or exports a bundle. Every graph MUTATION is an explicit CLI
+# (or REST) verb that records a Human Decision with a caller-supplied actor;
+# Claude Code drives those through its shell where the command is visible.
+# Every result is bounded, workspace-scoped and carries the current
+# Knowledge Revision.
+# ---------------------------------------------------------------------------
+def get_graph_stats(scope: str) -> Dict[str, Any]:
+    """Canonical knowledge-graph statistics for a workspace: active entity/
+    claim/relation counts by type and lifecycle, plus the current Knowledge
+    Revision. Runs the incremental staleness reconciliation first, so the
+    numbers never count knowledge whose sources moved on."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().knowledge.get_stats(pid)
+
+
+def search_graph(scope: str, query: str, limit: int = 20,
+                 include_stale: bool = False) -> Dict[str, Any]:
+    """Search canonical Entities and Claims (separate result sections).
+    Deterministic fusion: exact canonical key > exact alias > exact
+    identifier token > lexical > vector similarity — an exact identifier is
+    never outranked by something that merely reads similar. Stale/withdrawn
+    objects are excluded unless include_stale."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().knowledge.search_entities(
+        pid, query, limit=limit, include_stale=include_stale)
+
+
+def get_graph_node(scope: str, node_id: str) -> Dict[str, Any]:
+    """One graph node in the stable read shape. Accepts entity, claim,
+    asset, revision, segment and evidence ids — the source-plane kinds are
+    projected from their canonical rows, never duplicated."""
+    from .runtime import get_runtime
+    from .knowledge.errors import GraphNodeNotFound
+    knowledge = get_runtime().knowledge
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return {"node": knowledge.get_node(pid, node_id)}
+        except GraphNodeNotFound as exc:
+            last = exc
+    raise last or ValueError(f"graph node not found: {node_id}")
+
+
+def expand_graph(scope: str, node_id: str, depth: int = 2,
+                 direction: str = "both",
+                 relation_types: Optional[List[str]] = None,
+                 include_stale: bool = False) -> Dict[str, Any]:
+    """Bounded, deterministic BFS expansion around one Entity node (hard
+    caps on depth, nodes and edges; the result says when it truncated)."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().knowledge.expand_node(
+        pid, node_id, depth=depth, direction=direction,
+        relation_types=relation_types or None, include_stale=include_stale)
+
+
+def find_graph_path(scope: str, source: str, target: str, max_depth: int = 6,
+                    direction: str = "both",
+                    include_stale: bool = False) -> Dict[str, Any]:
+    """Bounded shortest-path discovery between two Entities, with Relation
+    evidence summaries. Honest outcomes: found / no-path / truncated — a
+    missing edge is never invented. This is generic graph reachability, NOT
+    the Phase 6 formal Requirement Traceability."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().knowledge.find_path(
+        pid, source, target, max_depth=max_depth, direction=direction,
+        include_stale=include_stale)
+
+
+def list_engineering_entities(scope: str, entity_type: Optional[str] = None,
+                              lifecycle_status: str = "active",
+                              limit: int = 50) -> Dict[str, Any]:
+    """List canonical engineering Entities (bounded). ``lifecycle_status``
+    defaults to active; pass ``stale`` or empty for history. Every entity
+    entered the graph through deterministic projection, explicit manual
+    creation or explicit candidate promotion — never automatically."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().knowledge.list_entities(
+        pid, entity_type=entity_type,
+        lifecycle_status=(lifecycle_status or None), limit=limit)
+
+
+def get_engineering_entity(scope: str, entity_id: str) -> Dict[str, Any]:
+    """One Entity with its aliases, bindings, claims and relations."""
+    from .runtime import get_runtime
+    from .knowledge.errors import EntityNotFound
+    knowledge = get_runtime().knowledge
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return {"entity": knowledge.get_entity(pid, entity_id)}
+        except EntityNotFound as exc:
+            last = exc
+    raise last or ValueError(f"entity not found: {entity_id}")
+
+
+def get_engineering_claim(scope: str, claim_id: str) -> Dict[str, Any]:
+    """One Claim with its evidence joins. Every active claim carries at
+    least one Evidence citation verified against the immutable store."""
+    from .runtime import get_runtime
+    from .knowledge.errors import ClaimNotFound
+    knowledge = get_runtime().knowledge
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return {"claim": knowledge.get_claim(pid, claim_id)}
+        except ClaimNotFound as exc:
+            last = exc
+    raise last or ValueError(f"claim not found: {claim_id}")
+
+
+def get_engineering_relation(scope: str, relation_id: str) -> Dict[str, Any]:
+    """One Relation with its evidence joins, state and provenance.
+    ``relation_state`` says how it is believed (explicit / inferred /
+    confirmed / rejected / stale / superseded); ``possibly-related`` is
+    never presented as anything stronger."""
+    from .runtime import get_runtime
+    from .knowledge.errors import RelationNotFound
+    knowledge = get_runtime().knowledge
+    last: Optional[Exception] = None
+    for pid in _pids(scope):
+        try:
+            return {"relation": knowledge.get_relation(pid, relation_id)}
+        except RelationNotFound as exc:
+            last = exc
+    raise last or ValueError(f"relation not found: {relation_id}")
+
+
+#: Additive read-only knowledge-graph tools (v2 Phase 5). Registered
+#: ALONGSIDE everything above — 26 + 9 = 35 in total.
+KNOWLEDGE_TOOLS: List[Callable[..., Any]] = [
+    get_graph_stats, search_graph, get_graph_node, expand_graph,
+    find_graph_path, list_engineering_entities, get_engineering_entity,
+    get_engineering_claim, get_engineering_relation,
+]
+
+KNOWLEDGE_TOOL_NAMES = tuple(fn.__name__ for fn in KNOWLEDGE_TOOLS)
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
@@ -535,6 +684,8 @@ def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
     for fn in DOCUMENT_TOOLS:              # additive read-only document tools (Phase 3)
         server.tool()(fn)
     for fn in SEMANTIC_TOOLS:              # additive read-only semantic/lens tools (Phase 4)
+        server.tool()(fn)
+    for fn in KNOWLEDGE_TOOLS:             # additive read-only graph tools (Phase 5)
         server.tool()(fn)
     return server
 

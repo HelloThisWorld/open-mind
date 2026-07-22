@@ -482,6 +482,126 @@ regexes, no URLs, capped sizes), then deterministic whole-corpus validation
 explicit `activate`. Invalid organization lens files stay listed with their
 errors.
 
+### `graph` — canonical Knowledge Graph queries and projection (v2 Phase 5)
+
+```bash
+python -m openmind.cli graph stats     --workspace p_... --json
+python -m openmind.cli graph seed plan --workspace p_... --json   # dry run
+python -m openmind.cli graph seed      --workspace p_... --json
+python -m openmind.cli graph sync      --workspace p_... --json
+python -m openmind.cli graph reconcile --workspace p_... --json
+python -m openmind.cli graph search    --workspace p_... --query REQ-NC-017 --json
+python -m openmind.cli graph node      --workspace p_... --node ent_... --json
+python -m openmind.cli graph expand    --workspace p_... --node ent_... \
+    --depth 2 --direction both --json
+python -m openmind.cli graph path      --workspace p_... \
+    --from ent_... --to ent_... --max-depth 6 --json
+```
+
+`seed`/`sync` are the deterministic, **model-free** projector: active Assets
+and Segments become code-component / code-symbol / interface / data-model /
+database-object / configuration / document / build-definition Entities, with
+`contains` (explicit) and `calls` (inferred, ambiguity preserved) Relations.
+An unchanged source is a no-op that mints **no** Knowledge Revision. `search`
+fuses exact canonical key > exact alias > exact identifier token > lexical >
+vector similarity — an exact identifier is never outranked by similar text.
+`expand` and `path` are bounded, deterministic traversals with honest
+`truncated` / `no-path` outcomes; `path` is generic reachability, NOT formal
+Requirement Traceability (Phase 6).
+
+### `promotion` — explicit candidate promotion (v2 Phase 5)
+
+```bash
+python -m openmind.cli promotion plan --workspace p_... --candidate sc_... --json
+python -m openmind.cli promotion promote --workspace p_... --candidate sc_... \
+    --actor reviewer-name --note "Approved for canonical knowledge." --json
+python -m openmind.cli promotion relation-plan --workspace p_... --relation sr_... --json
+python -m openmind.cli promotion promote-relation --workspace p_... --relation sr_... \
+    --actor reviewer-name --note "Endpoints and evidence verified." --json
+```
+
+Review and promotion are separate acts: `semantic review --decision confirm`
+updates candidate metadata only; **this** command is the sole bridge into the
+canonical graph. Eligibility (all re-checked inside the transaction):
+`review_status=confirmed`, `lifecycle_status=active`,
+`evidence_status=verified`, source Revisions current, endpoints resolving
+unambiguously (relations), not already promoted. There is deliberately no
+`--accept-stale` / `--ignore-evidence` / `--force-unverified`. `plan` is a
+deterministic dry-run that writes nothing; promotion is transactional and
+idempotent (re-promoting returns the same target, minting nothing);
+conflict candidates cannot be promoted at all. Every promotion records a
+promotion row, a Human Decision and exactly one Knowledge Revision.
+
+### `entity` / `claim` / `relation` — graph governance (v2 Phase 5)
+
+```bash
+python -m openmind.cli entity list   --workspace p_... --type requirement --json
+python -m openmind.cli entity show   --workspace p_... --entity ent_... --json
+python -m openmind.cli entity create --workspace p_... --type requirement \
+    --key requirement:REQ-NC-017 --name REQ-NC-017 \
+    --evidence e_... --actor reviewer --note "manual entity" --json
+python -m openmind.cli entity alias-add --workspace p_... --entity ent_... \
+    --alias NC-17 --type acronym --actor reviewer --note "known acronym" --json
+python -m openmind.cli entity merge  --workspace p_... --source ent_dup --target ent_main \
+    --actor reviewer --note "duplicates" --json
+python -m openmind.cli entity split  --workspace p_... --source ent_... \
+    --new-type workflow --new-key workflow:derived:step-two \
+    --claim clm_... --binding bd_... --actor reviewer --note "split" --json
+python -m openmind.cli entity authority --workspace p_... --entity ent_... \
+    --status authoritative --actor lead --note "board approval" --json
+python -m openmind.cli claim create  --workspace p_... --entity ent_... \
+    --type normative-statement --statement "..." --evidence e_... \
+    --actor reviewer --note "manual claim" --json
+python -m openmind.cli relation create --workspace p_... --source ent_a --target ent_b \
+    --type refines --state confirmed --evidence e_... \
+    --actor reviewer --note "manual relation" --json
+python -m openmind.cli relation reject  --workspace p_... --relation rel_... \
+    --actor reviewer --note "not real" --json
+python -m openmind.cli relation restore --workspace p_... --relation rel_... \
+    --actor reviewer --note "was real" --json
+```
+
+Every write records a Human Decision with the caller-supplied `--actor`
+(never inferred) and bounded `--note`, plus one Knowledge Revision. Manual
+Entities/Claims/Relations REQUIRE at least one valid `--evidence` id (quotes,
+when given, must match the immutable snapshot; fabrications are rejected).
+Manual relations may be `explicit` or `confirmed` only — never `inferred`.
+Alias collisions across entities are reported, never silently attached.
+`supersede`/`withdraw` subcommands exist for all three object kinds; nothing
+is ever deleted — superseded, withdrawn, merged and rejected records stay
+queryable.
+
+### `knowledge revisions` / `revision` / `decisions` — graph history (v2 Phase 5)
+
+```bash
+python -m openmind.cli knowledge revisions --workspace p_... --json
+python -m openmind.cli knowledge revision  --workspace p_... --number 3 --json
+python -m openmind.cli knowledge decisions --workspace p_... --json
+```
+
+Added beside the Phase 3 `knowledge search` (which is unchanged). The ledger
+is per-workspace, monotonic and immutable; one graph transaction = one
+revision, and a failed transaction leaves none.
+
+### `bundle export` — Knowledge Bundle 2.0 Draft (v2 Phase 5)
+
+```bash
+python -m openmind.cli bundle export --workspace p_... --output ./.openmind-v2 \
+    --current-only --json
+python -m openmind.cli bundle export --workspace p_... --output ./.openmind-v2 \
+    --include-history --json
+python -m openmind.bundle_verify ./.openmind-v2
+```
+
+A SEPARATE contract from the frozen `.openmind` 1.1.0 artifact: schema
+`2.0.0-draft.1`, its own directory of deterministic JSONL files + JSON
+schemas + a manifest with per-file SHA-256 hashes and record counts. No
+secrets, no provider profiles, no prompts, no raw model output, no absolute
+paths. `--knowledge-revision N` filters records by their creation revision
+stamp (documented as such — it does not reconstruct point-in-time lifecycle
+states). `python -m openmind.bundle_verify` is a standalone stdlib-only
+verifier any consumer can run.
+
 ### `export`
 
 ```bash

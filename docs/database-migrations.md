@@ -78,6 +78,7 @@ runner switches the connection to explicit-transaction mode
 | 3 | `asset_model` | the canonical Asset model: `assets`, `asset_revisions`, `segments`, `evidence` + their indexes. Additive — creates only new tables (all `IF NOT EXISTS`), touches no existing row |
 | 4 | `document_ingestion` | document ingestion: `segments.content_blob_hash`, `jobs.payload_json`, `document_parses`, `document_index` + their indexes. Additive — two columns with defaults and two new tables |
 | 5 | `semantic_plane` | the Phase 4 semantic plane: `workspace_semantic_policies`, `semantic_analysis_runs`, `semantic_analysis_targets`, `semantic_candidates` (+ evidence join), `semantic_relation_candidates` (+ evidence join), `semantic_conflict_candidates` (+ evidence join), `semantic_usage`, `semantic_cache`, `project_lenses` + their indexes. Additive — twelve new tables, no existing row touched |
+| 6 | `knowledge_graph` | the Phase 5 canonical Engineering Knowledge Graph: `engineering_entities`, `engineering_entity_aliases`, `engineering_entity_bindings`, `engineering_claims` (+ evidence join), `engineering_relations` (+ evidence join), `knowledge_decisions`, `knowledge_revisions`, `knowledge_promotions`, `knowledge_projection_state` + their indexes. Additive — eleven new tables, no existing row touched |
 
 `v0003` adds the OpenMind v2 canonical content-identity model. `assets`
 references `projects(id)` and the whole subtree cascades on `ON DELETE CASCADE`,
@@ -127,14 +128,26 @@ deliberately NOT here — profiles live in the machine-local sidecar
 (`~/.openmind/providers.json`) and key VALUES live only in environment
 variables. See [docs/v2/phase-4-semantic-plane.md](v2/phase-4-semantic-plane.md).
 
+`v0006` adds the Phase 5 canonical Engineering Knowledge Graph: Entities
+(logical identity `UNIQUE(workspace, entity_type, canonical_key)`), their
+aliases and source bindings, Claims and Relations with their evidence-quote
+joins, the immutable Human Decision audit, the per-workspace monotonic
+Knowledge Revision ledger (`UNIQUE(workspace_id, revision_number)` is the
+concurrency backstop), promotion records and the deterministic projection
+watermark. Graph-internal foreign keys cascade so a workspace wipe stays
+clean; there is deliberately NO foreign key to `semantic_candidates` — a
+promoted candidate's id is stored as provenance, never as an ownership edge,
+so canonical history cannot be cascade-deleted through the Phase 4 tables.
+See [docs/v2/phase-5-knowledge-graph.md](v2/phase-5-knowledge-graph.md).
+
 ### Upgrading an existing database
 
 Nothing to do — open OpenMind and it migrates itself. Concretely:
 
 ```text
-empty database    -> v0001..v0005 create every table     -> ledger records 1..5
-legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..5
-                     v0002..v0005 apply additively           (existing data untouched)
+empty database    -> v0001..v0006 create every table     -> ledger records 1..6
+legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..6
+                     v0002..v0006 apply additively           (existing data untouched)
 current database  -> nothing to apply                     -> no writes
 ```
 
@@ -153,6 +166,16 @@ A Phase 1–3 database upgrades to v0005 the same way: every `v0005` change is a
 new empty table, so all of the above PLUS document parse records, document
 indexes and glossary/structure maps survive byte-for-byte. Semantic policy
 rows appear only when a workspace explicitly sets a policy.
+
+A Phase 1–4 database upgrades to v0006 identically: every `v0006` change is a
+new empty table, so projects, jobs, Assets, Revisions, Segments, Evidence,
+content blobs, document parse records, document indexes, semantic policies,
+runs, targets, candidates (all three kinds), usage records, the semantic
+cache, Project Lenses, template metadata, Ask history, cases and maps all
+survive byte-for-byte (`tests/verify_knowledge_migration.py` builds a real
+v0005 database, seeds representative rows and proves it). Graph rows appear
+only through deterministic projection, explicit manual creation or explicit
+candidate promotion — never from the migration itself.
 
 A legacy database is **baselined, not recreated**. `v0001` is written entirely
 with `CREATE TABLE IF NOT EXISTS`, so against a database that already has those

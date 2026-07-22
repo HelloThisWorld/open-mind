@@ -180,6 +180,52 @@ jobs:
       - name: Semantic adapter tests
         run: python scripts/run_acceptance.py --only verify_semantic_adapters
 
+      # -- canonical knowledge graph (v2 Phase 5) ------------------------
+      - name: Knowledge migration tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_migration
+
+      - name: Knowledge entity tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_entities
+
+      - name: Knowledge claim tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_claims
+
+      - name: Knowledge relation tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_relations
+
+      - name: Knowledge revision-ledger tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_revisions
+
+      - name: Knowledge decision-audit tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_decisions
+
+      - name: Candidate promotion tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_promotion
+
+      - name: Deterministic projection tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_projection
+
+      - name: Graph staleness tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_staleness
+
+      - name: Entity merge/split tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_merge_split
+
+      - name: Graph search tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_search
+
+      - name: Graph traversal tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_graph
+
+      - name: Knowledge Bundle 2.0 Draft tests (exporter + verifier)
+        run: python scripts/run_acceptance.py --only verify_knowledge_bundle
+
+      - name: Knowledge CLI tests
+        run: python scripts/run_acceptance.py --only verify_knowledge_cli
+
+      - name: Knowledge adapter tests (REST + 9 MCP tools + 35-tool gate)
+        run: python scripts/run_acceptance.py --only verify_knowledge_adapters
+
       - name: No provider credential reaches CI
         run: |
           python - <<'PY'
@@ -260,9 +306,9 @@ jobs:
           from openmind.runtime import get_runtime
 
           # The nine core tools are a STABLE external contract; Phase 2 adds
-          # read-only Asset tools, Phase 3 read-only document tools and
-          # Phase 4 read-only semantic/lens tools ALONGSIDE them, never in
-          # place of one. 9 + 4 + 6 + 7 = 26, exactly.
+          # read-only Asset tools, Phase 3 read-only document tools, Phase 4
+          # read-only semantic/lens tools and Phase 5 read-only graph tools
+          # ALONGSIDE them, never in place of one. 9+4+6+7+9 = 35, exactly.
           core = {"search", "route", "dispatch", "get_glossary",
                   "find_similar_cases", "save_case", "get_doc",
                   "propose_fix", "apply_fix"}
@@ -274,23 +320,31 @@ jobs:
                       "list_semantic_candidates", "get_semantic_candidate",
                       "list_project_lenses", "get_project_lens",
                       "get_semantic_usage"}
+          knowledge = {"get_graph_stats", "search_graph", "get_graph_node",
+                       "expand_graph", "find_graph_path",
+                       "list_engineering_entities", "get_engineering_entity",
+                       "get_engineering_claim", "get_engineering_relation"}
           server = mcp_server.create_mcp_server(get_runtime())
           names = {t.name for t in asyncio.run(server.list_tools())}
           assert core <= names, f"core MCP tool missing: {core - names}"
           assert asset <= names, f"asset MCP tool missing: {asset - names}"
           assert document <= names, f"document MCP tool missing: {document - names}"
           assert semantic <= names, f"semantic MCP tool missing: {semantic - names}"
-          expected = core | asset | document | semantic
+          assert knowledge <= names, f"graph MCP tool missing: {knowledge - names}"
+          expected = core | asset | document | semantic | knowledge
           assert names == expected, f"unexpected MCP tools: {names ^ expected}"
-          assert len(names) == 26, f"expected 26 tools, got {len(names)}"
-          # No write/import tool: Phase 3 adds no document writer and Phase 4
-          # adds nothing that configures providers, changes policy, starts a
-          # paid analysis, reviews a candidate or activates a lens.
+          assert len(names) == 35, f"expected 35 tools, got {len(names)}"
+          # No write/import tool: Phase 3 adds no document writer, Phase 4
+          # nothing that configures providers or triggers paid analysis, and
+          # Phase 5 nothing that promotes, creates, merges, changes
+          # authority, seeds/syncs the graph or exports bundles.
           assert not {n for n in names
                       if n.startswith(("add_", "import_", "create_",
                                        "delete_", "update_", "set_",
                                        "start_", "approve_", "activate_",
-                                       "review_", "configure_"))}, names
+                                       "review_", "configure_", "promote_",
+                                       "merge_", "split_", "seed_", "sync_",
+                                       "export_", "withdraw_"))}, names
           assert server.name == "open-mind", server.name
           print("MCP smoke OK:", len(names), "tools")
           PY
@@ -386,7 +440,7 @@ jobs:
       - name: Artifact export contract
         run: python tests/verify_artifacts.py
 
-      - name: Migration to v0005 + content-store byte round-trip
+      - name: Migration to v0006 + content-store byte round-trip
         shell: bash
         run: |
           python - <<'PY'
@@ -395,7 +449,7 @@ jobs:
           os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
           from openmind import db, content_store as cs
           db.init_db()
-          assert db.migration_status()["version"] == 5, db.migration_status()
+          assert db.migration_status()["version"] == 6, db.migration_status()
           conn = db._c()
           tables = {r[0] for r in conn.execute(
               "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -403,6 +457,11 @@ jobs:
           assert {"workspace_semantic_policies", "semantic_analysis_runs",
                   "semantic_candidates", "semantic_cache", "semantic_usage",
                   "project_lenses"} <= tables, tables
+          assert {"engineering_entities", "engineering_claims",
+                  "engineering_relations", "engineering_entity_aliases",
+                  "engineering_entity_bindings", "knowledge_decisions",
+                  "knowledge_revisions", "knowledge_promotions",
+                  "knowledge_projection_state"} <= tables, tables
           assert "content_blob_hash" in {
               r[1] for r in conn.execute("PRAGMA table_info(segments)")}
           assert "payload_json" in {
@@ -508,6 +567,109 @@ jobs:
           assert org and org[0]["validation"]["result"] == "valid", org
           print("semantic smoke OK: candidate persisted + verified, cache "
                 "hit, staleness, lenses")
+          PY
+
+      # -- knowledge graph smoke (v2 Phase 5) -----------------------------
+      # The whole promotion chain on every OS: deterministic seed, a mock
+      # candidate confirmed and EXPLICITLY promoted, entity/claim/relation
+      # lookup, a bounded graph path, and a Bundle 2.0 Draft export that
+      # the standalone verifier accepts. Zero network, zero credentials.
+      - name: Knowledge graph smoke (seed, promote, path, bundle)
+        shell: bash
+        run: |
+          export OPENMIND_DATA_DIR="$(mktemp -d)"
+          export OPENMIND_MACHINE_DIR="$(mktemp -d)"
+          python - <<'PY'
+          import pathlib, subprocess, sys, tempfile
+          from openmind.runtime import get_runtime
+          from openmind.semantic.models import ProviderProfile
+          from openmind.semantic.providers import profiles
+
+          rt = get_runtime()
+          pid = rt.workspaces.create("ci-knowledge")["id"]
+          src = pathlib.Path(tempfile.mkdtemp())
+          doc = src / "requirements.md"
+          doc.write_text("# Reqs\n\nREQ-CI-001: The job shall finish.\n",
+                         encoding="utf-8")
+          assert rt.documents.add_document(
+              pid, str(doc), wait=True, timeout=300)["status"] == "new_asset"
+
+          # deterministic seed: model-free, one knowledge revision
+          seed = rt.knowledge.seed(pid, actor="ci")
+          assert seed["changed"] and seed["knowledge_revision"] == 1, seed
+          assert rt.knowledge.sync(pid)["action"] == "noop"
+
+          # a mock candidate, confirmed, then EXPLICITLY promoted
+          from openmind import db
+          from openmind.semantic.context import resolve_evidence_text
+          evidence_id = None
+          for a in db.list_assets(pid, limit=50):
+              for s in db.list_segments(pid, a["current_revision_id"],
+                                        limit=50):
+                  ev = db.get_evidence_for_segment(pid, s["id"])
+                  if ev and "shall finish" in (
+                          resolve_evidence_text(pid, ev["id"]) or ""):
+                      evidence_id = ev["id"]
+          assert evidence_id
+          profiles.upsert_profile(ProviderProfile(
+              name="ci-mock", kind="mock", metadata={"responses": {
+                  "requirement-extraction": {"candidates": [{
+                      "candidateType": "requirement",
+                      "stableKey": "REQ-CI-001", "title": "Finish",
+                      "statement": "The job shall finish.",
+                      "attributes": {},
+                      "evidence": [{"evidenceId": evidence_id,
+                                    "quote": "The job shall finish."}],
+                      "confidenceHint": "medium", "reason": "normative"}]}}}))
+          rt.semantic.set_policy(pid, provider_profile="ci-mock")
+          rt.semantic.start_analysis(
+              pid, task_types=["requirement-extraction"], wait=True,
+              timeout=300)
+          cid = rt.semantic.list_candidates(
+              pid, candidate_type="requirement")["candidates"][0]["id"]
+          # confirming is review metadata only — promotion is separate
+          rt.semantic.review_candidate(pid, cid, decision="confirm",
+                                       reviewer="ci")
+          from openmind.knowledge import store as kg
+          assert kg.count_entities(
+              pid, entity_type="requirement") == 0, "review must not promote"
+          promoted = rt.knowledge.promote_candidate(
+              pid, cid, actor="ci", note="ci promotion")
+          assert promoted["status"] == "promoted", promoted
+          entity_id = promoted["entity"]["id"]
+          claim_id = promoted["claim"]["id"]
+
+          # lookups + a manual relation + a bounded path
+          assert rt.knowledge.get_entity(pid, entity_id)["canonical_key"] \
+              == "requirement:REQ-CI-001"
+          assert rt.knowledge.get_claim(pid, claim_id)["evidence"]
+          doc_entities = [e for e in rt.knowledge.list_entities(
+              pid, entity_type="document")["entities"]]
+          assert doc_entities, "seed should have projected the document"
+          relation = rt.knowledge.create_relation(
+              pid, source_entity_id=entity_id,
+              target_entity_id=doc_entities[0]["id"],
+              relation_type="derived-from", relation_state="confirmed",
+              evidence=[{"evidence_id": evidence_id}],
+              actor="ci", note="ci relation")["relation"]
+          assert rt.knowledge.get_relation(
+              pid, relation["id"])["relation_state"] == "confirmed"
+          path = rt.knowledge.find_path(pid, entity_id,
+                                        doc_entities[0]["id"])
+          assert path["outcome"] == "found", path
+
+          # bundle export + standalone verification
+          out = pathlib.Path(tempfile.mkdtemp()) / "bundle"
+          from openmind.knowledge.bundle import export_bundle
+          manifest = export_bundle(pid, str(out), current_only=True)
+          assert manifest["bundleSchemaVersion"] == "2.0.0-draft.1"
+          verdict = subprocess.run(
+              [sys.executable, "-m", "openmind.bundle_verify", str(out)],
+              capture_output=True, text=True)
+          assert verdict.returncode == 0, verdict.stdout + verdict.stderr
+          print("knowledge smoke OK: seed -> promote -> path -> bundle "
+                "verified at revision",
+                rt.knowledge.get_current_revision(pid)["knowledge_revision"])
           PY
 
       - name: CLI asset help + fixture ingest + asset list + evidence read
