@@ -33,6 +33,19 @@ def _norm(path: str) -> str:
     return (path or "").replace("\\", "/").rstrip("/")
 
 
+def _canon(path: str) -> str:
+    """Canonicalize a path (resolve symlinks / short names) then normalize its
+    separators. This is what makes a repository key stable when the registered
+    workspace root and Git's ``--show-toplevel`` disagree on the canonical form
+    of the same directory — e.g. macOS ``/var`` -> ``/private/var``, or a
+    Windows 8.3 short path — which would otherwise leak an absolute path into
+    the key instead of yielding ``git:.``."""
+    try:
+        return _norm(os.path.realpath(path))
+    except OSError:
+        return _norm(path)
+
+
 class RepositoryDiscovery:
     """Discovers and classifies Git repositories for one workspace."""
 
@@ -58,6 +71,10 @@ class RepositoryDiscovery:
         """Find repositories under the registered paths, persist their portable
         records, and return them. Deduplicated by Git common directory."""
         ws_root = self.workspace_root()
+        # Canonicalize the workspace root so it shares the same form Git returns
+        # for the toplevel; otherwise a symlinked/short-name root leaks an
+        # absolute path into the repository key (see _canon).
+        ws_root_canon = _canon(ws_root) if ws_root else ""
         seen_common: Dict[str, str] = {}     # common-dir -> repository_key
         found: List[Dict[str, object]] = []
         candidates = self.registered_paths() or ([ws_root] if ws_root else [])
@@ -67,13 +84,16 @@ class RepositoryDiscovery:
             toplevel = self._toplevel(path)
             if not toplevel:
                 continue
+            toplevel_canon = _canon(toplevel)
             common = self._common_dir(toplevel) or toplevel
-            key = repository_key_for(ws_root or toplevel, toplevel)
+            key = repository_key_for(ws_root_canon or toplevel_canon,
+                                     toplevel_canon)
             if common in seen_common:
                 continue
             seen_common[common] = key
             facts = self._classify(toplevel)
-            rel = machine.relativize(toplevel, ws_root).strip("/") or "."
+            rel = machine.relativize(toplevel_canon,
+                                     ws_root_canon).strip("/") or "."
             record = upsert_repository(
                 self.workspace_id, key, relative_root=rel,
                 object_format=facts["object_format"],
@@ -136,11 +156,18 @@ def resolve_root(workspace_id: str, repository: Dict[str, object]) -> str:
     (e.g. ``data/`` copied to a machine that has not re-pointed the source)."""
     ws_root = _norm(machine.project_root(workspace_id))
     rel = str(repository.get("relative_root") or ".")
-    if rel in (".", ""):
-        candidate = ws_root
-    else:
-        candidate = machine.absolutize(rel, ws_root)
-    candidate = _norm(candidate)
+
+    def _candidate(root: str) -> str:
+        if not root:
+            return ""
+        return _norm(root if rel in (".", "") else machine.absolutize(rel, root))
+
+    candidate = _candidate(ws_root)
+    # Fall back to the canonical root form: the relative root was computed
+    # against a canonicalized workspace root, so a symlinked/short-name root
+    # only resolves after realpath (macOS /var -> /private/var, etc.).
+    if not candidate or not os.path.isdir(candidate):
+        candidate = _candidate(_canon(ws_root))
     if not candidate or not os.path.isdir(candidate):
         raise RepositoryUnavailable(
             f"git repository {repository.get('repository_key')!r} is not "
