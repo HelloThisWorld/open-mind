@@ -203,7 +203,7 @@ fconn.close()
 runtime = get_runtime()
 check("runtime bootstrap reports at least schema version 6",
       runtime.info()["schema_version"] >= 6)
-check("runtime version advanced to 1.6.0-dev",
-      runtime.version == "1.6.0-dev")
+check("runtime version advanced to 1.7.0-dev",
+      runtime.version == "1.7.0-dev")
 
 finish()

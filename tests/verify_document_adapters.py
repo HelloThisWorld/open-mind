@@ -248,7 +248,7 @@ with TestClient(app) as client:
     check("compat: GET /api/health still works",
           client.get("/api/health").status_code == 200)
     check("compat: health reports the new runtime version",
-          client.get("/api/health").json()["version"] == "1.6.0-dev")
+          client.get("/api/health").json()["version"] == "1.7.0-dev")
     assets = client.get(f"/projects/{WS}/assets").json()
     check("compat: GET assets still returns the Phase 2 shape",
           {"assets", "total", "limit", "offset", "count"} <= set(assets))

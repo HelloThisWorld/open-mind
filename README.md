@@ -417,11 +417,75 @@ python -m openmind.cli conflict promote --workspace p_... --candidate sx_... \
   `conflict promote`, and only when confirmed + active + verified with all
   referenced objects resolving canonically.
 
-Deliberately **not** in this phase: Git diff synchronization and branch/PR
-overlays (Phase 7), webhooks, CI merge blocking, automatic conflict
+Deliberately **not** in this phase: automatic conflict
 resolution, automatic promotion, connectors, plugin packaging (Phase 8),
 Neo4j/Cypher/GraphQL, and the Bundle 2.0 schema freeze. Full design:
 [docs/v2/phase-6-traceability-conflicts.md](docs/v2/phase-6-traceability-conflicts.md).
+
+---
+
+## Git Change Intelligence & Branch/PR Overlays (v2 Phase 7)
+
+Phase 7 adds an **isolated Git Overlay plane**: a read-only projection of a
+branch, pull request, commit range or working tree onto a coherent snapshot of
+the canonical Base Workspace. It answers *"if this change landed, what
+engineering knowledge would it touch, break, or fix?"* — with the same evidence
+discipline as the rest of OpenMind. It **never mutates Git, never contacts a
+remote, and never writes a single canonical row.**
+
+```bash
+# capture a coherent baseline (clean worktree + known Knowledge Revision)
+python -m openmind.cli git baseline capture --workspace p_... --json
+
+# analyse a local PR using only locally available refs (no GitHub fetch)
+python -m openmind.cli pr analyze --workspace p_... --repository git:. \
+    --base main --head feature/namecheck --pr-number 123 \
+    --title "Add NameCheck timeout handling" --wait --json
+
+# the evidence-cited Change Impact Report, then a portable Impact Packet
+python -m openmind.cli overlay impact --workspace p_... --overlay ov_... --json
+python -m openmind.cli impact export --workspace p_... --overlay ov_... \
+    --output ./.openmind-impact --json
+python -m openmind.impact_verify ./.openmind-impact
+```
+
+- **One read-only Git boundary.** Every Git call goes through a single
+  `subprocess.run(shell=False, ...)` gate that permits only a read-only
+  allow-list (`rev-parse`, `diff`, `cat-file`, `merge-base`, …) and rejects
+  `checkout`/`reset`/`merge`/`fetch`/`push`/… *before spawning a process*. Refs
+  are validated and resolved through `--verify --end-of-options` so a hostile
+  value can never become a Git option, and no command contacts a remote.
+- **Overlay ≠ Workspace.** An overlay is `Base snapshot + Git file delta +
+  overlay content snapshots + overlay Segments/Evidence + graph delta + derived
+  impact`. It references Base objects by id but lives in its own tables; every
+  result carries the Base coordinates (Knowledge Revision, policy checksum,
+  commits) that make it reproducible. **Building an overlay changes zero
+  canonical rows** (asset/graph/trace/conflict tables and the revision ledger
+  are provably untouched).
+- **Honest diff intelligence.** Added / modified / deleted / renamed / copied /
+  type-changed / binary / symlink / submodule / Git-LFS changes are all handled;
+  a pure rename is a *path change*, not a fake implementation change; binary and
+  LFS content is flagged, never parsed or embedded; before/after bytes are
+  snapshotted immutably so Evidence survives Git GC.
+- **Evidence-cited impact, never invented.** A changed implementation is walked
+  back to its Requirements via reverse formal traceability, revalidated against
+  a **virtual Graph View** (Base graph + overlay delta); tests are *recommended*,
+  never executed; projected Gaps and Conflicts are computed from the Phase 6
+  detectors over only the changed subjects and are **never** written into the
+  canonical gap/conflict tables. Risk is deterministic and rule-based —
+  `unknown` is never downgraded to `low`.
+- **Additive and compatible.** All 43 existing MCP tools are unchanged; Phase 7
+  adds 8 read-only overlay tools (**51 total**). `.openmind` stays `1.1.0`, the
+  Knowledge Bundle stays `2.0.0-draft.2`, and overlays get a *separate* Change
+  Impact Packet (`1.0.0-draft.1`). Reconciliation after an external merge is
+  explicit — OpenMind never merges, and never auto-promotes a projected relation.
+
+Deliberately **not** in this phase: any Git mutation or remote contact, GitHub
+API auth / PR fetching / comments / webhooks, GitLab/Bitbucket, CI merge
+blocking, automatic semantic analysis of changed files, plugin packaging and
+Verified Agent Skills (Phase 8), and the Feature Evidence Packet (Phase 9).
+Full design:
+[docs/v2/phase-7-git-overlays.md](docs/v2/phase-7-git-overlays.md).
 
 ---
 

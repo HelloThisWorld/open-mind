@@ -272,8 +272,23 @@ jobs:
       - name: Trace/conflict CLI tests
         run: python scripts/run_acceptance.py --only verify_traceability_cli
 
-      - name: Trace adapter tests (REST + 8 MCP tools + 43-tool gate)
+      - name: Trace adapter tests (REST + 8 MCP tools + 51-tool gate)
         run: python scripts/run_acceptance.py --only verify_traceability_adapters
+
+      # -- git change intelligence + overlays (v2 Phase 7) ----------------
+      # Read-only by construction: no step below mutates Git or contacts a
+      # remote, and every overlay build must change zero canonical rows.
+      - name: Git command security boundary tests
+        run: python scripts/run_acceptance.py --only verify_git_security
+
+      - name: Overlay model + diff taxonomy + isolation tests
+        run: python scripts/run_acceptance.py --only verify_overlay_model
+
+      - name: Change Impact Packet + verifier tests (Bundle stays draft.2)
+        run: python scripts/run_acceptance.py --only verify_impact_packet
+
+      - name: Overlay adapter tests (CLI + REST + 51-tool MCP gate + versions)
+        run: python scripts/run_acceptance.py --only verify_overlay_adapters
 
       - name: No provider credential reaches CI
         run: |
@@ -358,7 +373,8 @@ jobs:
           # read-only Asset tools, Phase 3 read-only document tools, Phase 4
           # read-only semantic/lens tools, Phase 5 read-only graph tools and
           # Phase 6 read-only trace/conflict tools ALONGSIDE them, never in
-          # place of one. 9+4+6+7+9+8 = 43, exactly.
+          # place of one, and Phase 7 read-only git-overlay tools too.
+          # 9+4+6+7+9+8+8 = 51, exactly.
           core = {"search", "route", "dispatch", "get_glossary",
                   "find_similar_cases", "save_case", "get_doc",
                   "propose_fix", "apply_fix"}
@@ -378,6 +394,10 @@ jobs:
                    "get_trace_path", "get_traceability_coverage",
                    "list_traceability_gaps", "list_engineering_conflicts",
                    "get_engineering_conflict"}
+          overlay = {"list_git_overlays", "get_git_overlay",
+                     "get_git_diff_summary", "search_git_overlay",
+                     "get_git_overlay_evidence", "get_change_impact_report",
+                     "list_impacted_requirements", "list_impacted_tests"}
           server = mcp_server.create_mcp_server(get_runtime())
           names = {t.name for t in asyncio.run(server.list_tools())}
           assert core <= names, f"core MCP tool missing: {core - names}"
@@ -386,9 +406,11 @@ jobs:
           assert semantic <= names, f"semantic MCP tool missing: {semantic - names}"
           assert knowledge <= names, f"graph MCP tool missing: {knowledge - names}"
           assert trace <= names, f"trace MCP tool missing: {trace - names}"
-          expected = core | asset | document | semantic | knowledge | trace
+          assert overlay <= names, f"overlay MCP tool missing: {overlay - names}"
+          expected = (core | asset | document | semantic | knowledge | trace
+                      | overlay)
           assert names == expected, f"unexpected MCP tools: {names ^ expected}"
-          assert len(names) == 43, f"expected 43 tools, got {len(names)}"
+          assert len(names) == 51, f"expected 51 tools, got {len(names)}"
           # No write/import tool: Phase 3 adds no document writer, Phase 4
           # nothing that configures providers or triggers paid analysis,
           # Phase 5 nothing that promotes, creates, merges, changes
@@ -499,7 +521,7 @@ jobs:
       - name: Artifact export contract
         run: python tests/verify_artifacts.py
 
-      - name: Migration to v0007 + content-store byte round-trip
+      - name: Migration to v0008 + content-store byte round-trip
         shell: bash
         run: |
           python - <<'PY'
@@ -508,7 +530,7 @@ jobs:
           os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
           from openmind import db, content_store as cs
           db.init_db()
-          assert db.migration_status()["version"] == 7, db.migration_status()
+          assert db.migration_status()["version"] == 8, db.migration_status()
           conn = db._c()
           tables = {r[0] for r in conn.execute(
               "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -527,6 +549,13 @@ jobs:
                   "engineering_conflicts", "engineering_conflict_objects",
                   "engineering_conflict_evidence",
                   "engineering_conflict_decisions"} <= tables, tables
+          assert {"git_repositories", "workspace_git_baselines",
+                  "git_overlays", "git_overlay_repositories",
+                  "git_overlay_files", "git_overlay_segments",
+                  "git_overlay_evidence", "git_overlay_entity_deltas",
+                  "git_overlay_relation_deltas", "git_overlay_trace_impacts",
+                  "git_overlay_conflict_impacts", "git_overlay_reports",
+                  "git_overlay_search_index"} <= tables, tables
           assert "content_blob_hash" in {
               r[1] for r in conn.execute("PRAGMA table_info(segments)")}
           assert "payload_json" in {
@@ -882,6 +911,83 @@ jobs:
           assert verdict.returncode == 0, verdict.stdout + verdict.stderr
           print("traceability smoke OK: policy -> trace -> gap -> "
                 "conflict -> promotion -> coverage -> bundle")
+          PY
+
+      # -- git overlay smoke (v2 Phase 7): temp repo -> baseline -> branch
+      # overlay -> modified code -> impact report -> packet export + verify.
+      # Read-only: the overlay build must change zero canonical rows.
+      - name: Git overlay smoke (baseline, branch overlay, impact, packet)
+        shell: bash
+        env:
+          OPENMIND_EMBED_OFFLINE: "1"
+          OPENMIND_EMBED_DEVICE: cpu
+        run: |
+          python - <<'PY'
+          import os, subprocess, sys, tempfile
+          os.environ["OPENMIND_DATA_DIR"] = tempfile.mkdtemp()
+          os.environ["OPENMIND_MACHINE_DIR"] = tempfile.mkdtemp()
+          repo = tempfile.mkdtemp(prefix="om_ovl_smoke_")
+          env = dict(os.environ, GIT_AUTHOR_NAME="ci", GIT_AUTHOR_EMAIL="ci@x.t",
+                     GIT_COMMITTER_NAME="ci", GIT_COMMITTER_EMAIL="ci@x.t")
+          def git(*a): subprocess.run(["git", *a], cwd=repo, env=env, check=True,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          def wr(rel, s):
+              p = os.path.join(repo, rel); os.makedirs(os.path.dirname(p) or repo, exist_ok=True)
+              open(p, "w", newline="\n").write(s)
+          git("init", "-q"); git("config", "core.autocrlf", "false")
+          wr("src/Svc.java", "class Svc {\n int run() { return 3000; }\n int keep(){return 1;} }\n")
+          wr("conf.properties", "timeout=3000\n")
+          git("add", "-A"); git("commit", "-qm", "base")
+          main = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo,
+                                env=env, capture_output=True, text=True).stdout.strip()
+          git("checkout", "-q", "-b", "feature")
+          wr("src/Svc.java", "class Svc {\n int run() { return 5000; }\n int keep(){return 1;}\n int add(){return 2;} }\n")
+          wr("conf.properties", "timeout=5000\n")
+          git("commit", "-aqm", "feature change"); git("checkout", "-q", main)
+
+          from openmind.runtime import get_runtime
+          from openmind import db
+          rt = get_runtime()
+          pid = rt.workspaces.create("ovl-smoke", path=repo.replace("\\", "/"))["id"]
+          rt.ingest.start(pid, wait=True, timeout=240)
+          rt.knowledge.sync(pid, actor="ci")
+          rt.git.discover_repositories(pid)
+          cap = rt.git.capture_baseline(pid, actor="ci")
+          assert cap["ok"], cap
+
+          conn, lock = db.shared_connection()
+          def counts():
+              with lock:
+                  return {t: conn.execute(f"SELECT COUNT(*) c FROM {t}").fetchone()["c"]
+                          for t in ("assets","segments","engineering_entities",
+                                    "engineering_relations","trace_paths",
+                                    "engineering_conflicts","knowledge_revisions")}
+          before = counts()
+          ovl = rt.overlays.create_overlay(pid, kind="branch",
+                    repositories=[{"repository":"git:.","base":main,
+                                   "head":"feature","target_branch":main}],
+                    name="ci")
+          oid = ovl["overlay"]["id"]
+          assert ovl["overlay"]["state"] == "ready", ovl["overlay"]
+          files = rt.overlays.list_overlay_files(pid, oid)
+          assert files["count"] >= 2, files
+          rep = rt.overlays.get_impact_report(pid, oid)["report"]
+          assert rep["schemaVersion"] == "1.0.0-draft.1", rep["schemaVersion"]
+          assert rep["riskSummary"]["overallRisk"] in ("info","low","medium","high",
+                                                       "critical","unknown")
+          after = counts()
+          assert before == after, f"ISOLATION VIOLATED: {before} != {after}"
+
+          out = tempfile.mkdtemp(prefix="ovl_pkt_")
+          rt.overlays.export_impact_packet(pid, oid, out)
+          v = subprocess.run([sys.executable, "-m", "openmind.impact_verify", out],
+                             capture_output=True, text=True)
+          assert v.returncode == 0, v.stdout + v.stderr
+          # refresh unchanged -> no-op
+          ref = rt.overlays.refresh_overlay(pid, oid)
+          assert ref.get("refreshed") is False, ref
+          print("git overlay smoke OK: baseline -> branch overlay -> impact "
+                "report -> packet verify -> no-op refresh; canonical drift NONE")
           PY
 
       - name: CLI asset help + fixture ingest + asset list + evidence read

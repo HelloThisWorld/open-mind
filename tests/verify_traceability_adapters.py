@@ -49,7 +49,11 @@ check("EXACTLY the eight trace/conflict tools are added",
 total = (len(mcp_server.TOOLS) + len(mcp_server.ASSET_TOOLS)
          + len(mcp_server.DOCUMENT_TOOLS) + len(mcp_server.SEMANTIC_TOOLS)
          + len(mcp_server.KNOWLEDGE_TOOLS) + len(mcp_server.TRACE_TOOLS))
-check("the complete MCP set is 43 tools (35 + 8)", total == 43)
+# The Phase 6 trace/conflict tools bring the set to 43; Phase 7 adds 8 more
+# read-only git-overlay tools (accounted for below) for 51 in total.
+check("the Phase 1-6 MCP set is 43 tools (35 + 8)", total == 43)
+check("Phase 7 adds exactly 8 read-only overlay tools",
+      len(mcp_server.OVERLAY_TOOLS) == 8)
 
 forbidden = {"set_trace_policy", "refresh_traceability", "trace_refresh",
              "scan_conflicts", "conflict_scan", "promote_conflict",
@@ -60,7 +64,8 @@ all_names = set(mcp_server.TOOL_NAMES + mcp_server.ASSET_TOOL_NAMES
                 + mcp_server.DOCUMENT_TOOL_NAMES
                 + mcp_server.SEMANTIC_TOOL_NAMES
                 + mcp_server.KNOWLEDGE_TOOL_NAMES
-                + mcp_server.TRACE_TOOL_NAMES)
+                + mcp_server.TRACE_TOOL_NAMES
+                + mcp_server.OVERLAY_TOOL_NAMES)
 check("no policy-change/refresh/scan/promotion/resolution tool on MCP",
       not (forbidden & all_names))
 check("every trace tool carries a docstring",
@@ -71,7 +76,8 @@ server = mcp_server.create_mcp_server()
 registered = sorted(t.name for t in
                     asyncio.new_event_loop().run_until_complete(
                         server.list_tools()))
-check("FastMCP registers all 43", len(registered) == 43)
+check("FastMCP registers all 51 (43 + 8 additive overlay tools)",
+      len(registered) == 51)
 check("every registered tool is an accounted-for addition",
       set(registered) == all_names)
 

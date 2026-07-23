@@ -1160,6 +1160,11 @@ def build_parser() -> argparse.ArgumentParser:
     from . import cli_trace
     cli_trace.register(sub, common)
 
+    # -- git change intelligence + overlays (v2 Phase 7): the git, overlay,
+    # pr and impact groups.
+    from . import cli_git
+    cli_git.register(sub, common)
+
     serve = sub.add_parser("serve", parents=[common],
                            help="run the FastAPI web application")
     serve.add_argument("--host", default="127.0.0.1",

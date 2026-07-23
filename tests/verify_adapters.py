@@ -302,10 +302,17 @@ TRACE_TOOLS = ("trace_requirement", "trace_code", "trace_test",
                "get_engineering_conflict")
 check("the eight read-only trace/conflict tools are registered additively",
       set(TRACE_TOOLS) <= set(registered), str(registered))
+# v2 Phase 7 adds eight read-only git-overlay tools the same way (43 -> 51).
+OVERLAY_TOOLS = ("list_git_overlays", "get_git_overlay", "get_git_diff_summary",
+                 "search_git_overlay", "get_git_overlay_evidence",
+                 "get_change_impact_report", "list_impacted_requirements",
+                 "list_impacted_tests")
+check("the eight read-only git-overlay tools are registered additively",
+      set(OVERLAY_TOOLS) <= set(registered), str(registered))
 check("every registered tool is an accounted-for addition",
       set(registered) == set(REQUIRED_TOOLS) | set(ASSET_TOOLS)
       | set(DOCUMENT_TOOLS) | set(SEMANTIC_TOOLS) | set(KNOWLEDGE_TOOLS)
-      | set(TRACE_TOOLS),
+      | set(TRACE_TOOLS) | set(OVERLAY_TOOLS),
       str(registered))
 
 descriptions = {t.name: (t.description or "") for t in asyncio.run(server.list_tools())}

@@ -266,6 +266,28 @@ SUITE: List[Script] = [
            "additive trace REST routes + exactly 8 read-only MCP tools + "
            "the 43-tool compatibility gate + zero provider calls"),
 
+    # -- git change intelligence + overlays (v2 Phase 7) --------------------
+    Script("verify_git_security", CORE,
+           "the single git command boundary: shell=False, read-only "
+           "allow-list, forbidden families denied before spawn, hostile ref / "
+           "option-injection rejection, bounded output/timeout, typed "
+           "merge-base/ref failures, no remote"),
+    Script("verify_overlay_model", CORE,
+           "overlay build + diff taxonomy (added/modified/deleted/rename/"
+           "binary), before/after evidence, overlay revision + no-op refresh, "
+           "and the canonical-Base isolation guarantee (zero row drift, no "
+           "Knowledge Revision minted, delete cascades only overlay data)"),
+    Script("verify_impact_packet", CORE,
+           "Change Impact Packet 1.0.0-draft.1: deterministic byte-identical "
+           "export, SHA-256 file hashes, no absolute paths / author emails, "
+           "verifier catches hash mismatch + dangling evidence, canonical "
+           "Bundle stays 2.0.0-draft.2"),
+    Script("verify_overlay_adapters", CORE,
+           "additive git/overlay/pr/impact CLI + REST routes + exactly 8 "
+           "read-only overlay MCP tools (43 -> 51), no write-capable overlay "
+           "tool, and the frozen version contracts (1.7.0-dev / v0008 / "
+           ".openmind 1.1.0 / Bundle draft.2)"),
+
     # -- template / docs pipeline -------------------------------------------
     Script("verify_templates", CORE, "template profile selection and validation"),
     Script("verify_facets", CORE, "template facets, roles and projections"),

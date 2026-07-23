@@ -155,14 +155,31 @@ graph or source plane — trace history must never block or cascade a
 canonical governance action. See
 [docs/v2/phase-6-traceability-conflicts.md](v2/phase-6-traceability-conflicts.md).
 
+`v0008` adds the Phase 7 Git change-intelligence and overlay plane:
+`git_repositories` (portable, workspace-relative repository keys — never an
+absolute path), `workspace_git_baselines` (a commit pinned to the canonical
+Knowledge Revision / policy checksum / projector+engine versions / Asset-state
+hash), and the isolated overlay tables `git_overlays`,
+`git_overlay_repositories`, `git_overlay_files`, `git_overlay_segments`,
+`git_overlay_evidence`, `git_overlay_entity_deltas`,
+`git_overlay_relation_deltas`, `git_overlay_trace_impacts`,
+`git_overlay_conflict_impacts`, `git_overlay_reports` and
+`git_overlay_search_index`. Overlay rows reference canonical objects only by
+id; there is deliberately NO foreign key from an overlay into a canonical
+table, so an overlay can never cascade a write or a delete into the Base
+Workspace. Internal foreign keys cascade only WITHIN the overlay
+(`git_overlay_*` → `git_overlays`), so deleting one overlay removes only its
+own data. See
+[docs/v2/phase-7-git-overlays.md](v2/phase-7-git-overlays.md).
+
 ### Upgrading an existing database
 
 Nothing to do — open OpenMind and it migrates itself. Concretely:
 
 ```text
-empty database    -> v0001..v0007 create every table     -> ledger records 1..7
-legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..7
-                     v0002..v0007 apply additively           (existing data untouched)
+empty database    -> v0001..v0008 create every table     -> ledger records 1..8
+legacy database   -> v0001 statements are all no-ops,     -> ledger records 1..8
+                     v0002..v0008 apply additively           (existing data untouched)
 current database  -> nothing to apply                     -> no writes
 ```
 
@@ -201,6 +218,13 @@ seeds representative rows across every phase and proves it). Trace paths,
 gaps, coverage snapshots and conflicts appear only through an explicit
 `trace refresh` / `conflict scan` / `conflict promote` — never from the
 migration itself.
+
+A Phase 1–6 database upgrades to v0008 the same way: every `v0008` change is a
+new empty table, so all of the above PLUS every Phase 6 trace path, gap,
+coverage snapshot and conflict survives byte-for-byte. Repositories, baselines
+and overlays appear only through an explicit `git baseline capture` /
+`overlay create` — never from the migration itself, and an overlay never writes
+a canonical row.
 
 A legacy database is **baselined, not recreated**. `v0001` is written entirely
 with `CREATE TABLE IF NOT EXISTS`, so against a database that already has those
