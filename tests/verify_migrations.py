@@ -57,12 +57,13 @@ conn = _db()
 result = migrations.migrate(conn)
 tables = _tables(conn)
 
-check("empty db: runner reports the head version", result.version == 7)
+check("empty db: runner reports the head version", result.version == 8)
 check("empty db: every migration is applied in order",
       result.applied == ["0001_baseline", "0002_paths_sidecar", "0003_asset_model",
                          "0004_document_ingestion", "0005_semantic_plane",
                          "0006_knowledge_graph",
-                         "0007_traceability_conflicts"])
+                         "0007_traceability_conflicts",
+                         "0008_git_overlays"])
 check("empty db: nothing was reported as already applied", result.already_applied == [])
 check("empty db: not flagged as a legacy baseline", result.baselined_legacy is False)
 check("empty db: schema_migrations ledger exists", "schema_migrations" in tables)
@@ -120,7 +121,8 @@ check("repeat run: reports every migration as already applied",
                                 "0003_asset_model", "0004_document_ingestion",
                                 "0005_semantic_plane",
                                 "0006_knowledge_graph",
-                                "0007_traceability_conflicts"])
+                                "0007_traceability_conflicts",
+                                "0008_git_overlays"])
 check("repeat run: version is unchanged", again.version == result.version)
 
 # ---------------------------------------------------------------------------
@@ -170,7 +172,7 @@ check("legacy db: detected as legacy before migrating", runner.detect_legacy(leg
 legacy_result = migrations.migrate(legacy)
 
 check("legacy db: reported as a legacy baseline", legacy_result.baselined_legacy is True)
-check("legacy db: brought to head version", legacy_result.version == 7)
+check("legacy db: brought to head version", legacy_result.version == 8)
 check("legacy db: baseline recorded, not skipped",
       "0001_baseline" in legacy_result.applied)
 check("legacy db: v0003 applied on top of the baseline",

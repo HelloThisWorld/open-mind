@@ -294,3 +294,37 @@ SUMMARY_TIMEOUT = 60.0       # per-service summary call — short so a slow/load
                              # model can't block the ingest worker (and the job
                              # queue) for minutes; falls back to deterministic.
 LLM_TEMPERATURE = 0.2
+
+
+# ---------------------------------------------------------------------------
+# Git change intelligence & overlays (v2 Phase 7)
+# ---------------------------------------------------------------------------
+# Every one of these bounds the blast radius of reading an untrusted repository
+# or an arbitrarily large change set. Hitting one is never a silent truncation:
+# the overlay or report is marked ``partial`` with an exact warning naming the
+# limit and the omitted count. All are overridable via the OPENMIND_* env var.
+GIT_COMMAND_TIMEOUT = float(_int_env("OPENMIND_GIT_COMMAND_TIMEOUT", 60))
+#: Hard ceiling on a single Git command's captured output (bytes). A batched
+#: blob read is chunked under this; a single command that would exceed it fails
+#: honestly rather than buffering unbounded memory.
+GIT_MAX_COMMAND_OUTPUT_BYTES = _int_env(
+    "OPENMIND_GIT_MAX_COMMAND_OUTPUT_BYTES", 256_000_000)
+GIT_MAX_REPOSITORIES_PER_WORKSPACE = _int_env(
+    "OPENMIND_GIT_MAX_REPOSITORIES_PER_WORKSPACE", 50)
+GIT_MAX_COMMITS_PER_OVERLAY = _int_env(
+    "OPENMIND_GIT_MAX_COMMITS_PER_OVERLAY", 2_000)
+GIT_MAX_CHANGED_FILES = _int_env("OPENMIND_GIT_MAX_CHANGED_FILES", 5_000)
+GIT_MAX_DIFF_BYTES = _int_env("OPENMIND_GIT_MAX_DIFF_BYTES", 50_000_000)
+GIT_MAX_DIFF_LINES = _int_env("OPENMIND_GIT_MAX_DIFF_LINES", 1_000_000)
+GIT_MAX_BLOB_BYTES = _int_env("OPENMIND_GIT_MAX_BLOB_BYTES", 4_000_000)
+GIT_MAX_TOTAL_BLOB_BYTES = _int_env(
+    "OPENMIND_GIT_MAX_TOTAL_BLOB_BYTES", 400_000_000)
+GIT_MAX_UNTRACKED_FILES = _int_env("OPENMIND_GIT_MAX_UNTRACKED_FILES", 2_000)
+GIT_MAX_UNTRACKED_BYTES = _int_env(
+    "OPENMIND_GIT_MAX_UNTRACKED_BYTES", 100_000_000)
+GIT_MAX_SEGMENTS_PER_FILE = _int_env(
+    "OPENMIND_GIT_MAX_SEGMENTS_PER_FILE", 5_000)
+GIT_MAX_REPORT_REQUIREMENTS = _int_env(
+    "OPENMIND_GIT_MAX_REPORT_REQUIREMENTS", 2_000)
+GIT_MAX_REPORT_TESTS = _int_env("OPENMIND_GIT_MAX_REPORT_TESTS", 2_000)
+GIT_MAX_REPORT_CONFLICTS = _int_env("OPENMIND_GIT_MAX_REPORT_CONFLICTS", 2_000)

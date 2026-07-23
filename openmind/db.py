@@ -164,6 +164,20 @@ def delete_project(project_id: str) -> None:
                             "workspace_traceability_policies"):
             _c().execute(f"DELETE FROM {trace_table} WHERE workspace_id=?",
                          (project_id,))
+        # Git overlays (v0008): overlay deletion cascades to its files,
+        # segments, evidence, deltas, impacts and reports; repositories,
+        # baselines and the search-index bookkeeping carry no FK into the
+        # overlay and are removed explicitly. Overlay rows only REFERENCE
+        # canonical objects by id, so this can never cascade into canonical
+        # graph/trace/conflict data.
+        _c().execute("DELETE FROM git_overlays WHERE workspace_id=?",
+                     (project_id,))
+        _c().execute(
+            "DELETE FROM git_overlay_search_index WHERE overlay_id NOT IN "
+            "(SELECT id FROM git_overlays)", ())
+        for git_table in ("workspace_git_baselines", "git_repositories"):
+            _c().execute(f"DELETE FROM {git_table} WHERE workspace_id=?",
+                         (project_id,))
         _c().execute("DELETE FROM projects WHERE id=?", (project_id,))
         _c().execute("DELETE FROM jobs WHERE project_id=?", (project_id,))
         _c().execute("DELETE FROM file_index WHERE project_id=?", (project_id,))

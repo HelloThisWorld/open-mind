@@ -66,9 +66,12 @@ server = mcp_server.create_mcp_server()
 registered = asyncio.new_event_loop().run_until_complete(server.list_tools())
 # Phase 6 registers eight additive read-only trace/conflict tools beside
 # these 35; verify_traceability_adapters accounts for each by name.
-check("FastMCP registers the 35 Phase 1-5 tools (43 with the trace set)",
+check("FastMCP registers the 35 Phase 1-5 tools (51 with the trace + overlay "
+      "sets)",
       len(registered) == 35 + len(mcp_server.TRACE_TOOLS)
-      and len(mcp_server.TRACE_TOOLS) == 8)
+      + len(mcp_server.OVERLAY_TOOLS)
+      and len(mcp_server.TRACE_TOOLS) == 8
+      and len(mcp_server.OVERLAY_TOOLS) == 8)
 
 # ---------------------------------------------------------------------------
 # 2. REST: legacy + Phase 3/4 routes intact; knowledge routes additive

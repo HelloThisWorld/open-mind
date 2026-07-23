@@ -1188,6 +1188,168 @@ def conflict_reopen(project_id: str, conflict_id: str,
         source_command="rest:POST /conflicts/reopen")
 
 
+# ---------------------------------------------------------------------------
+# Git change intelligence + overlays (v2 Phase 7) — additive, read-only wrt Git
+# and canonical data. No generic git endpoint; no endpoint accepts arbitrary
+# git arguments; every list is bounded.
+# ---------------------------------------------------------------------------
+@app.get("/projects/{project_id}/git/repositories")
+def git_repositories(project_id: str, discover: bool = False) -> Dict[str, Any]:
+    if discover:
+        return _svc().git.discover_repositories(project_id)
+    return _svc().git.list_repositories(project_id)
+
+
+@app.get("/projects/{project_id}/git/repositories/{repository_id}")
+def git_repository(project_id: str, repository_id: str) -> Dict[str, Any]:
+    return _svc().git.get_repository(project_id, repository_id)
+
+
+@app.get("/projects/{project_id}/git/status")
+def git_status(project_id: str, repository: str) -> Dict[str, Any]:
+    return _svc().git.get_repository_status(project_id, repository)
+
+
+@app.post("/projects/{project_id}/git/baselines/plan")
+def git_baseline_plan(project_id: str,
+                      body: Dict[str, Any] = None) -> Dict[str, Any]:
+    body = body or {}
+    return _svc().git.plan_baseline(project_id, body.get("repository"))
+
+
+@app.post("/projects/{project_id}/git/baselines")
+def git_baseline_capture(project_id: str,
+                         body: Dict[str, Any] = None) -> Dict[str, Any]:
+    body = body or {}
+    return _svc().git.capture_baseline(project_id, body.get("repository"),
+                                       actor=body.get("actor", ""))
+
+
+@app.get("/projects/{project_id}/git/baselines")
+def git_baselines(project_id: str,
+                  repository: Optional[str] = None) -> Dict[str, Any]:
+    return _svc().git.list_baselines(project_id, repository)
+
+
+@app.get("/projects/{project_id}/git/baselines/{baseline_id}")
+def git_baseline(project_id: str, baseline_id: str) -> Dict[str, Any]:
+    return _svc().git.get_baseline(project_id, baseline_id)
+
+
+@app.post("/projects/{project_id}/overlays/plan")
+def overlays_plan(project_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    return _svc().overlays.plan_overlay(
+        project_id, kind=body.get("kind", ""),
+        repositories=body.get("repositories", []))
+
+
+@app.post("/projects/{project_id}/overlays")
+def overlays_create(project_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    return _svc().overlays.create_overlay(
+        project_id, kind=body.get("kind", ""),
+        repositories=body.get("repositories", []),
+        name=body.get("name", ""), options=body.get("options"),
+        allow_partial_repositories=bool(body.get("allow_partial_repositories")))
+
+
+@app.get("/projects/{project_id}/overlays")
+def overlays_list(project_id: str,
+                  state: Optional[str] = None) -> Dict[str, Any]:
+    return _svc().overlays.list_overlays(project_id, state=state)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}")
+def overlay_show(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.get_overlay(project_id, overlay_id)
+
+
+@app.post("/projects/{project_id}/overlays/{overlay_id}/refresh")
+def overlay_refresh(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.refresh_overlay(project_id, overlay_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/files")
+def overlay_files(project_id: str, overlay_id: str,
+                  change_type: Optional[str] = None) -> Dict[str, Any]:
+    return _svc().overlays.list_overlay_files(project_id, overlay_id,
+                                              change_type=change_type)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/files/{file_id}")
+def overlay_file(project_id: str, overlay_id: str,
+                 file_id: str) -> Dict[str, Any]:
+    return _svc().overlays.get_overlay_file(project_id, overlay_id, file_id)
+
+
+@app.post("/projects/{project_id}/overlays/{overlay_id}/search")
+def overlay_search(project_id: str, overlay_id: str,
+                   body: Dict[str, Any]) -> Dict[str, Any]:
+    return _svc().overlays.search_overlay(
+        project_id, overlay_id, body.get("query", ""),
+        limit=int(body.get("limit", 10)))
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/evidence/{evidence_id}")
+def overlay_evidence(project_id: str, overlay_id: str,
+                     evidence_id: str) -> Dict[str, Any]:
+    return _svc().overlays.get_overlay_evidence(project_id, overlay_id,
+                                                evidence_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/impact")
+def overlay_impact(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.get_impact_report(project_id, overlay_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/requirements")
+def overlay_requirements(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.list_impacted_requirements(project_id, overlay_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/tests")
+def overlay_tests(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.list_impacted_tests(project_id, overlay_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/traces")
+def overlay_traces(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.list_trace_impacts(project_id, overlay_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/gaps")
+def overlay_gaps(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.list_gap_impacts(project_id, overlay_id)
+
+
+@app.get("/projects/{project_id}/overlays/{overlay_id}/conflicts")
+def overlay_conflicts(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.list_conflict_impacts(project_id, overlay_id)
+
+
+@app.post("/projects/{project_id}/overlays/{overlay_id}/close")
+def overlay_close(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.close_overlay(project_id, overlay_id)
+
+
+@app.post("/projects/{project_id}/overlays/{overlay_id}/abandon")
+def overlay_abandon(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.abandon_overlay(project_id, overlay_id)
+
+
+@app.delete("/projects/{project_id}/overlays/{overlay_id}")
+def overlay_delete(project_id: str, overlay_id: str) -> Dict[str, Any]:
+    return _svc().overlays.delete_overlay(project_id, overlay_id)
+
+
+@app.post("/projects/{project_id}/overlays/{overlay_id}/reconcile")
+def overlay_reconcile(project_id: str, overlay_id: str,
+                      body: Dict[str, Any] = None) -> Dict[str, Any]:
+    body = body or {}
+    return _svc().overlays.reconcile_overlay(
+        project_id, overlay_id, actor=body.get("actor", ""),
+        note=body.get("note", ""))
+
+
 def _reject_conflicting_targets(req: models.DocumentImportReq) -> None:
     """``asset`` / ``logical_key`` / ``new_asset`` name three different targets
     for one set of bytes; combining them has no single correct meaning, so it is

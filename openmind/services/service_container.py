@@ -42,6 +42,8 @@ class ServiceContainer:
         self._lenses = None
         self._knowledge = None
         self._traceability = None
+        self._git = None
+        self._overlays = None
 
     @property
     def workspaces(self) -> WorkspaceService:
@@ -125,6 +127,33 @@ class ServiceContainer:
                 self.workspaces, self.jobs,
                 ensure_worker=self._ensure_worker)
         return self._traceability
+
+    @property
+    def git(self):
+        # Git change intelligence (v2 Phase 7). Lazy like the graph/trace
+        # services: export/doctor never pay for it, and constructing it never
+        # starts a worker or spawns a subprocess. Baseline coherence needs the
+        # knowledge + traceability services, injected lazily to avoid a cycle.
+        if self._git is None:
+            from ..git.service import GitService
+            self._git = GitService(
+                self.workspaces,
+                knowledge_provider=lambda: self.knowledge,
+                traceability_provider=lambda: self.traceability)
+        return self._git
+
+    @property
+    def overlays(self):
+        # Isolated Git Overlay plane (v2 Phase 7). Lazy for the same reasons;
+        # it composes the git, knowledge and traceability services.
+        if self._overlays is None:
+            from ..overlays.service import OverlayService
+            self._overlays = OverlayService(
+                self.workspaces, self.jobs, self.git,
+                knowledge_provider=lambda: self.knowledge,
+                traceability_provider=lambda: self.traceability,
+                ensure_worker=self._ensure_worker)
+        return self._overlays
 
     @property
     def export(self) -> ExportService:

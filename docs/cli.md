@@ -714,6 +714,71 @@ paths/gaps and open/under-review/accepted-risk conflicts.
 consumer can run — it also checks trace referential integrity, step
 ordering and coverage arithmetic.
 
+### `git` / `overlay` / `pr` / `impact` — Git change intelligence (v2 Phase 7)
+
+Read-only Git overlays project a branch/PR/commit-range/working-tree change
+onto a coherent Base snapshot. **Nothing here mutates Git, contacts a remote,
+or writes a canonical row.** Refs must already exist locally.
+
+```bash
+# 1. repositories + a coherent baseline (needs a clean worktree at HEAD and a
+#    known Knowledge Revision — capture is explicit, never silent on a dirty tree)
+python -m openmind.cli git repositories --workspace p_... --discover --json
+python -m openmind.cli git status       --workspace p_... --repository git:. --json
+python -m openmind.cli git baseline plan    --workspace p_... --json
+python -m openmind.cli git baseline capture --workspace p_... --actor me --json
+python -m openmind.cli git baseline list    --workspace p_... --json
+
+# 2. build an overlay (branch / pr / commit-range / working-tree / change-set)
+python -m openmind.cli overlay create --workspace p_... --kind branch \
+    --repository git:. --base main --head feature/namecheck --wait --json
+# multi-repository change-set: repeatable --repo-range "git:key=base..head"
+python -m openmind.cli overlay create --workspace p_... --kind change-set \
+    --repo-range "git:service-a=main..feature/a" \
+    --repo-range "git:service-b=main..feature/b" --wait --json
+# local PR convenience (metadata is caller-supplied; no GitHub call)
+python -m openmind.cli pr analyze --workspace p_... --repository git:. \
+    --base main --head feature/namecheck --pr-number 123 \
+    --title "Add NameCheck timeout handling" --wait --json
+
+# 3. read the evidence-cited impact (all read-only, provisional)
+python -m openmind.cli overlay files        --workspace p_... --overlay ov_... --json
+python -m openmind.cli overlay impact       --workspace p_... --overlay ov_... --json
+python -m openmind.cli overlay requirements --workspace p_... --overlay ov_... --json
+python -m openmind.cli overlay tests        --workspace p_... --overlay ov_... --json
+python -m openmind.cli overlay conflicts    --workspace p_... --overlay ov_... --json
+python -m openmind.cli overlay search       --workspace p_... --overlay ov_... --query timeout --json
+
+# 4. incrementality + lifecycle
+python -m openmind.cli overlay refresh --workspace p_... --overlay ov_... --json  # no-op if unchanged
+python -m openmind.cli overlay close   --workspace p_... --overlay ov_... --json
+python -m openmind.cli overlay delete  --workspace p_... --overlay ov_... --json  # removes only overlay data
+
+# 5. after an EXTERNAL merge (OpenMind never merges), reconcile explicitly
+python -m openmind.cli overlay reconcile --workspace p_... --overlay ov_... \
+    --actor reviewer --note "PR 123 merged into main." --wait --json
+
+# 6. portable Change Impact Packet + standalone verifier
+python -m openmind.cli impact export --workspace p_... --overlay ov_... \
+    --output ./.openmind-impact --json
+python -m openmind.impact_verify ./.openmind-impact
+```
+
+- **Overlay revision + staleness.** A changed head ref produces the next overlay
+  revision; an unchanged refresh is a no-op; when the Base commit or Knowledge
+  Revision advances the overlay goes `stale` and must be refreshed explicitly —
+  the old report is never silently reinterpreted.
+- **Projected, not canonical.** Impacted requirements/tests, projected gaps and
+  projected conflicts are overlay records; tests are *recommended*, never run;
+  a projected gap/conflict is never inserted into a canonical table.
+- **Impact Packet ≠ Knowledge Bundle.** The packet (`1.0.0-draft.1`) is a
+  separate, deterministic, hash-manifested export; the canonical Bundle stays
+  `2.0.0-draft.2`. `python -m openmind.impact_verify` re-checks hashes and
+  referential integrity with no database.
+
+Full design and guarantees:
+[docs/v2/phase-7-git-overlays.md](v2/phase-7-git-overlays.md).
+
 ### `export`
 
 ```bash

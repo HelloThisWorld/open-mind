@@ -786,6 +786,101 @@ TRACE_TOOL_NAMES = tuple(fn.__name__ for fn in TRACE_TOOLS)
 
 
 # ---------------------------------------------------------------------------
+# Git Overlay tools (v2 Phase 7) — additive, READ-ONLY, provisional
+# ---------------------------------------------------------------------------
+# Every one of these reports OVERLAY output, which is a provisional projection
+# onto a snapshot of the canonical Base Workspace. None of them mutates Git or
+# canonical knowledge; overlays are created/refreshed/reconciled/deleted only
+# from the CLI or REST, never here. Projected gaps are NOT canonical gaps and
+# projected conflicts are NOT canonical conflicts.
+def list_git_overlays(scope: str, state: Optional[str] = None) -> Dict[str, Any]:
+    """List this workspace's Git overlays (branch/PR/commit-range/working-tree/
+    change-set) with their state and revision. Overlays are provisional views;
+    the canonical Base Workspace is unchanged. Read-only."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.list_overlays(pid, state=state)
+
+
+def get_git_overlay(scope: str, overlay_id: str) -> Dict[str, Any]:
+    """One Git overlay's identity, state, overlay revision and pinned Base
+    coordinates (Base Knowledge Revision, policy checksum). Provisional;
+    read-only; never mutates Git or canonical knowledge."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.get_overlay(pid, overlay_id)
+
+
+def get_git_diff_summary(scope: str, overlay_id: str) -> Dict[str, Any]:
+    """The overlay's changed-file summary and per-file change taxonomy
+    (added/modified/deleted/renamed/copied/type-changed, binary/symlink/
+    submodule/LFS). Read-only; no Git mutation, no remote contact."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.get_diff_summary(pid, overlay_id)
+
+
+def search_git_overlay(scope: str, overlay_id: str, query: str,
+                       limit: int = 10) -> Dict[str, Any]:
+    """Composed overlay search over changed content, labelled base /
+    overlay-before / overlay-after, with a maskedBaseHits count. Read-only."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.search_overlay(pid, overlay_id, query,
+                                                 limit=limit)
+
+
+def get_git_overlay_evidence(scope: str, overlay_id: str,
+                             evidence_id: str) -> Dict[str, Any]:
+    """One immutable overlay Evidence citation (oev_...): its git-blob-range /
+    git-worktree-range locator, bounded excerpt and content hash. Overlay
+    Evidence is provisional and is never accepted by canonical promotion."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.get_overlay_evidence(pid, overlay_id,
+                                                      evidence_id)
+
+
+def get_change_impact_report(scope: str, overlay_id: str) -> Dict[str, Any]:
+    """The deterministic Change Impact Report (schema 1.0.0-draft.1): file/
+    segment changes, graph deltas, impacted requirements/tests, trace/gap/
+    conflict impact and rule-based risk — rendered from structured records, not
+    a model. Projected gaps/conflicts are NOT canonical. Read-only."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.get_impact_report(pid, overlay_id)
+
+
+def list_impacted_requirements(scope: str, overlay_id: str) -> Dict[str, Any]:
+    """Requirements this overlay would affect, via reverse Base traceability
+    revalidated against the virtual overlay graph. Provisional projection; the
+    canonical trace snapshot is unchanged. Read-only."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.list_impacted_requirements(pid, overlay_id)
+
+
+def list_impacted_tests(scope: str, overlay_id: str) -> Dict[str, Any]:
+    """Tests whose Base trace paths include an object this overlay changed or
+    removed. Tests are reported, NEVER executed, and a listed test is never
+    claimed sufficient. Read-only; provisional."""
+    from .runtime import get_runtime
+    pid = _pids(scope)[0]
+    return get_runtime().overlays.list_impacted_tests(pid, overlay_id)
+
+
+#: Additive read-only Git overlay tools (v2 Phase 7). Registered ALONGSIDE
+#: everything above — 43 + 8 = 51 in total.
+OVERLAY_TOOLS: List[Callable[..., Any]] = [
+    list_git_overlays, get_git_overlay, get_git_diff_summary,
+    search_git_overlay, get_git_overlay_evidence, get_change_impact_report,
+    list_impacted_requirements, list_impacted_tests,
+]
+
+OVERLAY_TOOL_NAMES = tuple(fn.__name__ for fn in OVERLAY_TOOLS)
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
@@ -815,6 +910,8 @@ def create_mcp_server(runtime: Optional[Any] = None) -> FastMCP:
     for fn in KNOWLEDGE_TOOLS:             # additive read-only graph tools (Phase 5)
         server.tool()(fn)
     for fn in TRACE_TOOLS:                 # additive read-only trace/conflict tools (Phase 6)
+        server.tool()(fn)
+    for fn in OVERLAY_TOOLS:               # additive read-only git overlay tools (Phase 7)
         server.tool()(fn)
     return server
 

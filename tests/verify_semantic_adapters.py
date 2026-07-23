@@ -63,11 +63,13 @@ registered = asyncio.new_event_loop().run_until_complete(server.list_tools())
 # Phase 6 eight trace/conflict tools; the graph suite
 # (verify_knowledge_adapters) and the trace suite
 # (verify_traceability_adapters) account for each by name.
-check("FastMCP registers the 26 pre-Phase-5 tools (43 with graph + trace)",
+check("FastMCP registers the 26 pre-Phase-5 tools (51 with graph + trace + "
+      "overlay)",
       len(registered) == 26 + len(mcp_server.KNOWLEDGE_TOOLS)
-      + len(mcp_server.TRACE_TOOLS)
+      + len(mcp_server.TRACE_TOOLS) + len(mcp_server.OVERLAY_TOOLS)
       and len(mcp_server.KNOWLEDGE_TOOLS) == 9
-      and len(mcp_server.TRACE_TOOLS) == 8)
+      and len(mcp_server.TRACE_TOOLS) == 8
+      and len(mcp_server.OVERLAY_TOOLS) == 8)
 
 # ---------------------------------------------------------------------------
 # 2. REST: every legacy route intact; semantic routes additive

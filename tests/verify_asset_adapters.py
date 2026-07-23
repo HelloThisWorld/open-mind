@@ -73,10 +73,16 @@ KNOWLEDGE = {"get_graph_stats", "search_graph", "get_graph_node",
 TRACE = {"trace_requirement", "trace_code", "trace_test", "get_trace_path",
          "get_traceability_coverage", "list_traceability_gaps",
          "list_engineering_conflicts", "get_engineering_conflict"}
+# Phase 7 eight read-only git-overlay tools.
+OVERLAY = {"list_git_overlays", "get_git_overlay", "get_git_diff_summary",
+           "search_git_overlay", "get_git_overlay_evidence",
+           "get_change_impact_report", "list_impacted_requirements",
+           "list_impacted_tests"}
 check("all nine core MCP tools remain", CORE <= tool_names)
 check("the four read-only asset MCP tools are added", ASSET <= tool_names)
 check("every registered tool is an accounted-for addition",
-      tool_names == CORE | ASSET | DOCUMENT | SEMANTIC | KNOWLEDGE | TRACE)
+      tool_names == CORE | ASSET | DOCUMENT | SEMANTIC | KNOWLEDGE | TRACE
+      | OVERLAY)
 check("the MCP server keeps its name", server.name == "open-mind")
 
 # ---------------------------------------------------------------------------

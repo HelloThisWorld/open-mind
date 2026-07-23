@@ -54,9 +54,11 @@ conn.execute("PRAGMA foreign_keys=ON")
 lock = threading.RLock()
 
 all_migrations = migration_runner.discover()
-check("v0007 is discovered as the migration head",
-      all_migrations[-1].version == 7
-      and all_migrations[-1].name == "traceability_conflicts")
+check("v0008 is discovered as the migration head (v0007 present)",
+      all_migrations[-1].version == 8
+      and all_migrations[-1].name == "git_overlays"
+      and any(m.version == 7 and m.name == "traceability_conflicts"
+              for m in all_migrations))
 
 original_discover = migration_runner.discover
 migration_runner.discover = lambda: [m for m in original_discover()
@@ -91,7 +93,15 @@ conn.execute("INSERT INTO knowledge_revisions (id,workspace_id,"
              "1,'manual-entity-create','2026-01-01')")
 conn.commit()
 
-result_v7 = migration_runner.migrate(conn, lock)
+# This test validates the v0006 -> v0007 upgrade specifically, so cap the
+# migration at v0007 (v0008 is exercised by verify_migrations and the Phase 7
+# suites). Without the cap the runner would additively apply v0008 too.
+migration_runner.discover = lambda: [m for m in original_discover()
+                                     if m.version <= 7]
+try:
+    result_v7 = migration_runner.migrate(conn, lock)
+finally:
+    migration_runner.discover = original_discover
 check("v0006 -> v0007 applies exactly one migration",
       [m for m in result_v7.applied] == ["0007_traceability_conflicts"]
       if hasattr(result_v7, "applied") else True)
@@ -118,7 +128,14 @@ check("prior knowledge revision survived",
 # repeated migration is a no-op
 before = conn.execute("SELECT version, checksum FROM schema_migrations "
                       "ORDER BY version").fetchall()
-migration_runner.migrate(conn, lock)
+# Idempotency of the v0007 state: re-running the SAME (<=7) migration set
+# applies nothing. (The additive v0008 is validated by verify_migrations.)
+migration_runner.discover = lambda: [m for m in original_discover()
+                                     if m.version <= 7]
+try:
+    migration_runner.migrate(conn, lock)
+finally:
+    migration_runner.discover = original_discover
 after = conn.execute("SELECT version, checksum FROM schema_migrations "
                      "ORDER BY version").fetchall()
 check("repeated migration applies nothing",
@@ -175,9 +192,9 @@ conn.close()
 from openmind.runtime import get_runtime  # noqa: E402
 
 runtime = get_runtime()
-check("runtime bootstrap reports schema version 7",
-      runtime.info()["schema_version"] == 7)
-check("runtime version is 1.6.0-dev", runtime.version == "1.6.0-dev")
+check("runtime bootstrap reports schema version 8",
+      runtime.info()["schema_version"] == 8)
+check("runtime version is 1.7.0-dev", runtime.version == "1.7.0-dev")
 
 from openmind import db as appdb  # noqa: E402
 conn2, lock2 = appdb.shared_connection()

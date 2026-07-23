@@ -128,6 +128,14 @@ class OpenMindRuntime:
         return self.services.traceability
 
     @property
+    def git(self):
+        return self.services.git
+
+    @property
+    def overlays(self):
+        return self.services.overlays
+
+    @property
     def export(self):
         return self.services.export
 
